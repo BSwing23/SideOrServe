@@ -2605,6 +2605,10 @@
             return directions[index];
         }
         
+        // Swingle Scale mapping — canonical 0-6 live weather lookup.
+        // Input: wind speed in mph (from OpenWeatherMap imperial units).
+        // Output: integer level 0/2/3/4/5/6 stored as weatherAtSetStart.swingleScale.
+        // Threshold for tactical adjustments: level >= 3 (≥8 mph crosswind).
         function getBeaufortScale(windSpeedMph) {
             // GASA Beach Volleyball Wind Scale (modified Beaufort)
             if (windSpeedMph < 4) {
@@ -6870,10 +6874,18 @@
                         const sw = w.swingleScale ?? w.beaufortForce ?? '—';
                         const desc = w.windDescription || '—';
                         const spd = w.windSpeed ? ` · ${w.windSpeed} mph` : '';
+                        const swNum = (typeof sw === 'number') ? sw : null;
+                        const tacticalBanner = (swNum !== null && swNum >= 3)
+                            ? `<div style="margin-top:10px;padding:10px 12px;background:rgba(152,30,50,0.45);border-left:3px solid white;border-radius:5px;">
+                                   <div style="font-weight:bold;font-size:0.9em;letter-spacing:0.03em;margin-bottom:4px;">SWINGLE ${swNum} — COACHING ALERT</div>
+                                   <div style="font-size:0.87em;line-height:1.5;">Swingle Scale ${swNum}+: Heavy Crosswinds. Prioritize bump sets; hand setting variance is too high.</div>
+                               </div>`
+                            : '';
                         return `<div class="stat-box" style="border-left-color:rgba(255,255,255,0.3);">
                             <h3>🌬️ CONDITIONS AT SET START</h3>
                             <div class="stat-row"><span>Swingle Scale</span><span><strong>${sw}</strong></span></div>
                             <div class="stat-row"><span>Wind</span><span>${desc}${spd}</span></div>
+                            ${tacticalBanner}
                         </div>`;
                     })()}
                 `;
@@ -8694,8 +8706,15 @@
                 contextState = lastCompletedSet.matchState;
             }
             
-            const isDeciding = contextState.gameType === 'deciding';
-            const switchInterval = contextState.switchInterval;
+            // isDeciding: check live context AND current setup selection.
+            // At coin-toss time before Set 3 starts, contextState is still from Set 2 ('regular').
+            const isDeciding = contextState.gameType === 'deciding' || matchSetup?.gameType === 'deciding';
+            // Deciding sets switch every 5 points, not 7.
+            // switchInterval MUST be 5 when isDeciding so that P5-scaled diffs compute
+            // the correct per-point rate inside calculateNetSideAdvantage:
+            //   ptDiff = (P7_diff × 5/7) / 5 = P7_diff / 7  ✓
+            // Using switchInterval=7 here would give P7_diff × 5/49 instead — wrong by (5/7).
+            const switchInterval = isDeciding ? 5 : (contextState.switchInterval || 7);
 
             // Project total points from observed average — no hardcoded assumptions
             const rpStats = userProfile?.rpStats;
@@ -8713,10 +8732,40 @@
             
             // Calculate net advantage for each starting side
             // Rule 1: P5 = P7 × (5/7) for deciding sets
-            // Scale observed P7 differentials down proportionally for 15-pt set rhythm
+            // Scale observed P7 differentials down proportionally for 15-pt set rhythm.
+            // Combined with switchInterval=5 above, this yields the correct per-point rate
+            // inside calculateNetSideAdvantage: (P7_diff × 5/7) / 5 = P7_diff / 7.
             const p5Scale = isDeciding ? (5 / 7) : 1;
-            const scaledDiff1 = p7Data.p7DiffSide1 * p5Scale;
-            const scaledDiff2 = p7Data.p7DiffSide2 * p5Scale;
+            let scaledDiff1 = p7Data.p7DiffSide1 * p5Scale;
+            let scaledDiff2 = p7Data.p7DiffSide2 * p5Scale;
+
+            // Rule 2: When actively inside a live deciding set, blend P5 baseline with
+            // real observed 5-pt block segments from the current set.
+            // Both the baseline (P7×5/7) and live segments are in P5-equivalent units,
+            // so blending by segment count is dimensionally consistent.
+            if (isDeciding && matchState.setActive && matchState.gameType === 'deciding') {
+                const liveP7 = matchState.p7Stats;
+                const lSegs1 = liveP7?.side1?.our?.length || 0;
+                const lSegs2 = liveP7?.side2?.our?.length || 0;
+                const liveTotalSegs = lSegs1 + lSegs2;
+                if (liveTotalSegs > 0) {
+                    const lAvgOur1   = lSegs1 > 0 ? liveP7.side1.our.reduce((a,b)=>a+b,0)/lSegs1 : 0;
+                    const lAvgTheir1 = lSegs1 > 0 ? liveP7.side1.their.reduce((a,b)=>a+b,0)/lSegs1 : 0;
+                    const lAvgOur2   = lSegs2 > 0 ? liveP7.side2.our.reduce((a,b)=>a+b,0)/lSegs2 : 0;
+                    const lAvgTheir2 = lSegs2 > 0 ? liveP7.side2.their.reduce((a,b)=>a+b,0)/lSegs2 : 0;
+                    const liveDiff1  = lAvgOur1 - lAvgTheir1;
+                    const liveDiff2  = lAvgOur2 - lAvgTheir2;
+                    // Prior weight floored at 2 to prevent a single-segment live reading
+                    // from completely overriding a rich prior-set baseline.
+                    const priorWeight = Math.max(p7Data.side1Segments + p7Data.side2Segments, 2);
+                    const liveWeight  = liveTotalSegs;
+                    const totalWeight = priorWeight + liveWeight;
+                    scaledDiff1 = (scaledDiff1 * priorWeight + liveDiff1 * liveWeight) / totalWeight;
+                    scaledDiff2 = (scaledDiff2 * priorWeight + liveDiff2 * liveWeight) / totalWeight;
+                    console.log(`[COIN TOSS] Deciding set blend: prior=${priorWeight} live=${liveWeight}` +
+                                ` diff1=${scaledDiff1.toFixed(3)} diff2=${scaledDiff2.toFixed(3)}`);
+                }
+            }
 
             const advStartingSide1 = calculateNetSideAdvantage(
                 contextState.side1Name,
@@ -9395,6 +9444,302 @@
             
             console.log('[PARTNERS] Selected paired partner:', selectedPairedPartner);
         }
+
+        // ── SoS SIMULATION TEST SUITE ─────────────────────────────────────────────
+        // Hidden from all UI. Call window.runSoSSimulation() from DevTools console.
+        // Tests calculateCoinTossStrategies() + captureVirtual15() with three canonical
+        // scenarios, then verifies the Virtual15 snapshot data structure.
+        //
+        // Returns an array of { scenario, expected, pass, result } objects.
+        // ─────────────────────────────────────────────────────────────────────────────
+
+        function runSoSSimulation() {
+            // ── 1. Save current live state ────────────────────────────────────────
+            const savedMatchState  = JSON.parse(JSON.stringify(matchState));
+            const savedMatchScore  = JSON.parse(JSON.stringify(matchScore));
+            const savedMatchSetup  = JSON.parse(JSON.stringify(matchSetup));
+            const savedUserProfile = userProfile ? JSON.parse(JSON.stringify(userProfile)) : null;
+
+            const results = [];
+
+            // ── Helpers ───────────────────────────────────────────────────────────
+
+            // Build a mock completed-set entry with the exact shape calculateP7Stats() expects
+            function mockSet(setNumber, s1Our, s1Their, s2Our, s2Their, gameType) {
+                return {
+                    setNumber,
+                    matchState: {
+                        side1Name: 'North',
+                        side2Name: 'South',
+                        switchInterval: gameType === 'deciding' ? 5 : 7,
+                        gameType: gameType || 'normal',
+                        setActive: false,
+                        p7Stats: {
+                            side1: { our: s1Our, their: s1Their },
+                            side2: { our: s2Our, their: s2Their }
+                        }
+                    },
+                    matchSetup: { startingSide: 'North', gameType: gameType || 'normal' }
+                };
+            }
+
+            // Build a minimal matchSetup for simulations
+            function buildSetup(gameType, swingleForce) {
+                return {
+                    venue: 'sim', venueName: 'Simulation Court', orientation: 'North-South',
+                    preferredSide: 'North', startingSide: 'North',
+                    setNumber: 3, servingTeam: 'our', yourTeamServer: 'you', opponentServer: 'opp1',
+                    roles: { player: 'blocker', partner: 'defender', opponent1: 'blocker', opponent2: 'defender' },
+                    yourName: 'SimPlayer', partnerName: 'SimPartner',
+                    opponent1Name: 'Opp1', opponent2Name: 'Opp2',
+                    sideNote: '', gameType: gameType,
+                    weather: { beaufortForce: swingleForce, windSpeed: swingleForce * 4, windDescription: 'Simulated', windDir: 90 }
+                };
+            }
+
+            // Build a minimal matchState for between-sets context
+            function buildIdleState(gameType) {
+                return {
+                    setActive: false, ourScore: 0, theirScore: 0,
+                    ourRealPoints: 0, theirRealPoints: 0,
+                    currentServer: null, servingTeam: null, currentSide: 'North',
+                    side1Name: 'North', side2Name: 'South',
+                    maxPoints: gameType === 'deciding' ? 15 : 21,
+                    switchInterval: gameType === 'deciding' ? 5 : 7,
+                    gameType: gameType,
+                    currentSegment: { side: 'North', ourPoints: 0, theirPoints: 0, startPoint: 0 },
+                    completedSegments: [],
+                    p7Stats: { side1: { our: [], their: [] }, side2: { our: [], their: [] } },
+                    servers: {
+                        you:     { ps: 0, servingTurns: 0, totalServes: 0, currentRunPS: 0, erp: 0 },
+                        partner: { ps: 0, servingTurns: 0, totalServes: 0, currentRunPS: 0, erp: 0 },
+                        opp1:    { ps: 0, servingTurns: 0, totalServes: 0, currentRunPS: 0, erp: 0 },
+                        opp2:    { ps: 0, servingTurns: 0, totalServes: 0, currentRunPS: 0, erp: 0 }
+                    },
+                    currentRun: { team: null, length: 0 },
+                    longestRuns: { our: 0, their: 0 },
+                    pointHistory: [], undoStack: [],
+                    virtual15: null, virtual15Captured: false
+                };
+            }
+
+            // Build a minimal userProfile with rpStats
+            // loserAvg × loserCount = totalRPs; avgSetPts × ptsCount = totalPointsSum
+            function buildProfile(loserAvg, loserCount, avgSetPts, ptsCount, sets15Override) {
+                const emptyRoles = {
+                    ourBlocker: {totalPS:0,count:0}, ourDefender: {totalPS:0,count:0},
+                    theirBlocker: {totalPS:0,count:0}, theirDefender: {totalPS:0,count:0},
+                    blockerMatchup: {total:0,ourWinAndWon:0}, defenderMatchup: {total:0,ourWinAndWon:0}
+                };
+                return {
+                    name: 'SimUser', affiliation: 'Sim', unitPref: 'imperial', email: 'sim@test.com',
+                    rpStats: {
+                        sets21: {
+                            losers: { totalRPs: loserAvg * loserCount, count: loserCount },
+                            totalPointsSum: avgSetPts * ptsCount, competitiveCount: ptsCount,
+                            ourTeam: {totalRPs:0,count:0}, opponents: {totalRPs:0,count:0},
+                            winners: {totalRPs:0,count:0}, servingTeamWins: 0, receivingTeamWins: 0,
+                            roles: emptyRoles
+                        },
+                        sets15: sets15Override || {
+                            losers: { totalRPs: 0, count: 0 },
+                            totalPointsSum: 0, competitiveCount: 0,
+                            ourTeam: {totalRPs:0,count:0}, opponents: {totalRPs:0,count:0},
+                            winners: {totalRPs:0,count:0}, servingTeamWins: 0, receivingTeamWins: 0,
+                            roles: emptyRoles
+                        },
+                        servingTeamWins: 0, receivingTeamWins: 0,
+                        momentum: {
+                            our:   { run3:{total:0,won:0}, run4:{total:0,won:0}, run5:{total:0,won:0} },
+                            their: { run3:{total:0,won:0}, run4:{total:0,won:0}, run5:{total:0,won:0} }
+                        }
+                    }
+                };
+            }
+
+            try {
+                // ── SCENARIO A: Calm (SW0), Nearly Neutral P7 ────────────────────
+                // P7 data is symmetric → sideAdvantagePoints ≈ 0
+                // 50 historical sets, loser avg 18 RPs → W=19, projectedTotal ≈ 44 pts
+                // receiveAdvantagePoints ≈ 0.63 pts — comfortably wins
+                // Expected: "RECEIVE first" (negligible side tax)
+
+                userProfile = buildProfile(18, 50, 44, 50);
+                matchScore = {
+                    yourSetsWon: 1, theirSetsWon: 1,
+                    setsCompleted: [
+                        mockSet(1, [4,3], [3,4], [3,4], [4,3], 'normal'),
+                        mockSet(2, [3,4], [4,3], [4,3], [3,4], 'normal')
+                    ],
+                    currentSetNumber: 3
+                };
+                matchSetup = buildSetup('normal', 0);
+                matchState = buildIdleState('normal');
+
+                const resultA = calculateCoinTossStrategies();
+                results.push({
+                    scenario: 'A — Calm SW0, Tight 21-19 Sets',
+                    expected: 'RECEIVE first (negligible side tax)',
+                    result: resultA,
+                    pass: !resultA.noData &&
+                          typeof resultA.winToss?.recommendation === 'string' &&
+                          resultA.winToss.recommendation.toLowerCase().includes('receive')
+                });
+
+                // ── SCENARIO B: Moderate Wind (SW3), Clear P7 Gap ────────────────
+                // P7 diff ≈ +3 / −3 → sideAdvantagePoints ≈ 1.71 pts
+                // receiveAdvantagePoints ≈ 0.63 pts — side would win on points alone
+                // BUT Swingle 3 < 4 threshold → wind-insufficient branch fires
+                // Expected: "RECEIVE first" with wind-below-threshold reasoning
+
+                userProfile = buildProfile(18, 50, 44, 50);
+                matchScore = {
+                    yourSetsWon: 1, theirSetsWon: 1,
+                    setsCompleted: [
+                        mockSet(1, [5,5], [2,2], [2,2], [5,5], 'normal'),
+                        mockSet(2, [5,5], [2,2], [2,2], [5,5], 'normal')
+                    ],
+                    currentSetNumber: 3
+                };
+                matchSetup = buildSetup('normal', 3);
+                matchState = buildIdleState('normal');
+
+                const resultB = calculateCoinTossStrategies();
+                results.push({
+                    scenario: 'B — SW3 Tipping Point, Clear P7 Gap',
+                    expected: 'RECEIVE first (wind below SW4 threshold, even though side > receive in pts)',
+                    result: resultB,
+                    pass: !resultB.noData &&
+                          typeof resultB.winToss?.recommendation === 'string' &&
+                          resultB.winToss.recommendation.toLowerCase().includes('receive') &&
+                          resultB.sideAdvantagePoints > resultB.receiveAdvantagePoints
+                });
+
+                // ── SCENARIO C: Extreme Wind (SW5), Deciding Set (P5 Engine) ─────
+                // P7 diffs extreme: side1 +5, side2 −5
+                // After P5 scaling (×5/7) + switchInterval=5: sideAdvantagePoints ≈ 2.86 pts
+                // sets15 W=6, projectedTotal=28: receiveAdvantagePoints ≈ 1.53 pts
+                // SW5 >= 4 threshold → both conditions met → side wins
+                // Expected: "North side"
+
+                const emptyRoles = {
+                    ourBlocker: {totalPS:0,count:0}, ourDefender: {totalPS:0,count:0},
+                    theirBlocker: {totalPS:0,count:0}, theirDefender: {totalPS:0,count:0},
+                    blockerMatchup: {total:0,ourWinAndWon:0}, defenderMatchup: {total:0,ourWinAndWon:0}
+                };
+                const sets15ForC = {
+                    losers: { totalRPs: 30, count: 6 },    // avg 5 → W=6
+                    totalPointsSum: 168, competitiveCount: 6, // avg 28 pts/deciding set
+                    ourTeam: {totalRPs:0,count:0}, opponents: {totalRPs:0,count:0},
+                    winners: {totalRPs:0,count:0}, servingTeamWins: 0, receivingTeamWins: 0,
+                    roles: emptyRoles
+                };
+                userProfile = buildProfile(18, 50, 44, 50, sets15ForC);
+                matchScore = {
+                    yourSetsWon: 1, theirSetsWon: 1,
+                    setsCompleted: [
+                        mockSet(1, [6,6,6], [1,1,1], [1,1,1], [6,6,6], 'normal'),
+                        mockSet(2, [6,6,6], [1,1,1], [1,1,1], [6,6,6], 'normal')
+                    ],
+                    currentSetNumber: 3
+                };
+                matchSetup = buildSetup('deciding', 5);
+                matchState = buildIdleState('deciding');
+
+                const resultC = calculateCoinTossStrategies();
+                results.push({
+                    scenario: 'C — SW5 Extreme, Deciding Set (P5 Engine)',
+                    expected: 'North side (P5 side tax overwhelms receive premium at SW5)',
+                    result: resultC,
+                    pass: !resultC.noData &&
+                          typeof resultC.winToss?.recommendation === 'string' &&
+                          !resultC.winToss.recommendation.toLowerCase().includes('receive')
+                });
+
+                // ── V15 SPOT-CHECK: Virtual15 Snapshot Structure ──────────────────
+                // Set up matchState as a live 21-pt set at 15-12 with server ERP values.
+                // Call captureVirtual15() directly and verify the output structure.
+                // totalPoints = 15+12 = 27, switchInterval in V15 is always 5,
+                // switches = floor(27/5) = 5, remainder = 2.
+
+                matchSetup = buildSetup('normal', 0);
+                matchSetup.preferredSide = 'North';
+                matchSetup.startingSide = 'North';
+
+                matchState = buildIdleState('normal');
+                matchState.setActive = true;
+                matchState.ourScore = 15;
+                matchState.theirScore = 12;
+                matchState.ourRealPoints = 10;
+                matchState.theirRealPoints = 8;
+                matchState.servers.you.erp = 2.5;
+                matchState.servers.partner.erp = 2.0;
+                matchState.servers.opp1.erp = 2.2;
+                matchState.servers.opp2.erp = 1.8;
+
+                captureVirtual15();
+
+                const v15 = matchState.virtual15;
+                const v15Keys = ['actualScore','actualRPs','virtualScore','totalPoints',
+                                 'switches','remainder','switchInterval','segmentDistribution'];
+                const v15Pass = v15 !== null &&
+                                v15Keys.every(k => k in v15) &&
+                                v15.switchInterval === 5 &&
+                                v15.totalPoints === 27 &&
+                                v15.switches === 5 &&
+                                v15.remainder === 2 &&
+                                typeof v15.virtualScore?.our === 'number' &&
+                                typeof v15.segmentDistribution?.ourAS === 'number';
+                results.push({
+                    scenario: 'V15 — Virtual15 Snapshot Structure',
+                    expected: 'switchInterval=5, totalPoints=27, switches=5, remainder=2, all keys present',
+                    result: { v15, keysFound: v15 ? Object.keys(v15) : [] },
+                    pass: v15Pass
+                });
+
+            } finally {
+                // ── Restore all global state (closure reassignment) ───────────────
+                matchState  = savedMatchState;
+                matchScore  = savedMatchScore;
+                matchSetup  = savedMatchSetup;
+                userProfile = savedUserProfile;
+            }
+
+            // ── Console output ────────────────────────────────────────────────────
+            console.group('%c[SoS SIMULATION RESULTS]', 'color:#981E32;font-weight:bold;font-size:14px');
+            results.forEach(r => {
+                const icon = r.pass ? '✅' : '❌';
+                console.group(`${icon} Scenario ${r.scenario}`);
+                console.log('Expected :', r.expected);
+                if (r.scenario.startsWith('V15')) {
+                    console.log('switchInterval:', r.result.v15?.switchInterval,
+                                '| totalPoints:', r.result.v15?.totalPoints,
+                                '| switches:', r.result.v15?.switches,
+                                '| remainder:', r.result.v15?.remainder);
+                    console.log('Keys found:', r.result.keysFound);
+                } else if (!r.result.noData) {
+                    console.log('Recommendation :', r.result.winToss?.recommendation);
+                    console.log('Reasoning      :', r.result.winToss?.reasoning);
+                    console.log('sideAdvPts     :', r.result.sideAdvantagePoints?.toFixed(3),
+                                '| receiveAdvPts:', r.result.receiveAdvantagePoints?.toFixed(3));
+                } else {
+                    console.warn('noData returned:', r.result.message);
+                }
+                console.log('PASS:', r.pass);
+                console.groupEnd();
+            });
+            const allPassed = results.every(r => r.pass);
+            console.log(
+                `%c${allPassed ? '✅ ALL SCENARIOS PASSED' : '❌ SOME SCENARIOS FAILED'}`,
+                `color:${allPassed ? '#22c55e' : '#ef4444'};font-weight:bold;font-size:13px`
+            );
+            console.groupEnd();
+
+            return results;
+        }
+
+        // Expose to DevTools console — not referenced anywhere in production UI
+        window.runSoSSimulation = runSoSSimulation;
 
     </script>
 
