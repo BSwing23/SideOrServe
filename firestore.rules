@@ -24,11 +24,14 @@ service cloud.firestore {
     }
 
     // ── Top-level matches collection ─────────────────────────────────────────
-    // Any authenticated user can read (needed for shared-match lookup).
+    // Owner can always read. Coaches in the same program can read via programId.
     // Create/update/delete requires the caller to be the document owner.
-    // Separate create rule uses request.resource.data (doc doesn't exist yet).
     match /matches/{matchId} {
-      allow read: if request.auth != null;
+      allow read: if request.auth != null && (
+        request.auth.uid == resource.data.userId ||
+        (resource.data.programId != null &&
+         get(/databases/$(database)/documents/players/$(request.auth.uid)).data.programId == resource.data.programId)
+      );
       allow create: if request.auth != null
                     && request.auth.uid == request.resource.data.userId;
       allow update, delete: if request.auth != null

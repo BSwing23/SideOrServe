@@ -566,6 +566,19 @@
             </div>
         </div>
         
+        <div class="form-group">
+            <label style="font-weight: bold;">Account Role:</label>
+            <div class="role-selector" id="accountRoleSelector">
+                <div class="role-option selected" onclick="selectAccountRole('manager', this)" id="roleManager">Manager (Score Entry)</div>
+                <div class="role-option" onclick="selectAccountRole('coach', this)" id="roleCoach">Coach (Dashboard)</div>
+            </div>
+        </div>
+        <div class="form-group">
+            <label for="programIdInput">Program ID:</label>
+            <input type="text" id="programIdInput" placeholder="e.g., arizona-beach-2026" style="text-transform:lowercase;">
+            <div style="font-size:0.8em; opacity:0.65; margin-top:4px;">Share this code with all managers in your program. Case-insensitive.</div>
+        </div>
+
         <button class="btn btn-primary" onclick="saveProfile()">Save Profile</button>
         
         <div class="info-box">
@@ -981,7 +994,7 @@
             <div id="streakWinStat" style="font-size:0.82em; opacity:0.75; margin-top:4px; text-align:center;"></div>
             <div style="display:flex; justify-content:center; gap:18px; font-size:0.82em; margin-top:4px; opacity:0.85;">
                 <span id="winProbIfWin" style="color:white;"></span>
-                <span id="winProbIfLose" style="color:rgba(220,80,80,0.9);"></span>
+                <span id="winProbIfLose" style="color:rgba(255,255,255,0.65);"></span>
             </div>
         </div>
         
@@ -1035,7 +1048,7 @@
             
             <div id="set3Setup" class="hidden">
                 <!-- Coin toss guidance — populated by buildSet3GuidanceBox() -->
-                <div id="set3CoinTossGuidance" style="background:rgba(255,255,255,0.07);border-radius:8px;padding:12px;margin-bottom:14px;font-size:0.9em;"></div>
+                <div id="set3CoinTossGuidance" style="border-radius:8px;padding:0;margin-bottom:14px;font-size:0.9em;"></div>
                 
                 <div class="form-group" id="set3Q1Group">
                     <label style="font-weight: bold;">Who serves first?</label>
@@ -1178,6 +1191,14 @@
             Lock Direction
         </button>
         <button class="btn btn-secondary" onclick="cancelCompass()">Cancel</button>
+    </div>
+
+    <!-- Coach Command Center Screen -->
+    <div id="commandCenterScreen" class="container hidden">
+        <h1 style="font-size:1.5em; margin-bottom:4px;">Live Program Dashboard</h1>
+        <div id="commandCenterProgramId" style="text-align:center; opacity:0.65; margin-bottom:18px; font-size:0.85em;"></div>
+        <div id="commandCenterGrid"></div>
+        <button class="btn btn-secondary" onclick="logout()" style="margin-top:20px; width:100%;">Log Out</button>
     </div>
 
 
@@ -1346,7 +1367,8 @@
                     if (profileDoc.exists) {
                         userProfile = profileDoc.data();
                         console.log('[PROFILE] Loaded profile:', userProfile);
-                        showHomeScreen();
+                        if ((userProfile.role || 'manager') === 'coach') showCommandCenterScreen();
+                        else showHomeScreen();
                     } else {
                         console.log('[PROFILE] No profile found, showing setup');
                         showProfileSetup();
@@ -1386,6 +1408,7 @@
             document.getElementById('quickWeatherScreen').classList.add('hidden');
             document.getElementById('quickCoinTossScreen').classList.add('hidden');
             document.getElementById('quickStatsScreen').classList.add('hidden');
+            document.getElementById('commandCenterScreen').classList.add('hidden');
         }
 
         function showAuthScreen() {
@@ -2261,6 +2284,8 @@
                     name: name,
                     affiliation: affiliation,
                     unitPref: unitPref,
+                    role: _selectedAccountRole || 'manager',
+                    programId: (document.getElementById('programIdInput')?.value || '').trim().toLowerCase() || null,
                     email: currentUser.email,
                     createdAt: firebase.firestore.FieldValue.serverTimestamp(),
                     updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
@@ -2323,8 +2348,9 @@
                 const profileDoc = await db.collection('players').doc(currentUser.uid).get();
                 userProfile = profileDoc.data();
                 console.log('[PROFILE] Reloaded profile with rpStats:', userProfile);
-                
-                showHomeScreen();
+
+                if ((userProfile.role || 'manager') === 'coach') showCommandCenterScreen();
+                else showHomeScreen();
             } catch (error) {
                 console.error('[PROFILE] Error saving profile:', error);
                 showProfileError('Error saving profile. Please try again.');
@@ -2335,6 +2361,13 @@
             document.querySelectorAll('#unitPrefSelector .role-option').forEach(e => e.classList.remove('selected'));
             el.classList.add('selected');
         }
+
+        let _selectedAccountRole = 'manager';
+        function selectAccountRole(role, el) {
+            _selectedAccountRole = role;
+            document.querySelectorAll('#accountRoleSelector .role-option').forEach(e => e.classList.remove('selected'));
+            el.classList.add('selected');
+        }
         
         function editProfile() {
             document.getElementById('playerName').value = userProfile.name || '';
@@ -2343,6 +2376,11 @@
             document.getElementById('unitPrefImperial')?.classList.toggle('selected', pref === 'imperial');
             document.getElementById('unitPrefMetric')?.classList.toggle('selected', pref === 'metric');
             document.getElementById('playerAffiliation').value = userProfile.affiliation || '';
+            document.getElementById('programIdInput').value = userProfile.programId || '';
+            const role = userProfile.role || 'manager';
+            _selectedAccountRole = role;
+            document.getElementById('roleManager')?.classList.toggle('selected', role === 'manager');
+            document.getElementById('roleCoach')?.classList.toggle('selected', role === 'coach');
             showProfileSetup();
         }
 
@@ -3957,11 +3995,19 @@
             } else if (setNum === 3) {
                 // SET 3: Full coin toss setup
                 document.getElementById('setSetupInfo').innerHTML = '';
-                
+
                 // Show Set 3 setup, hide Set 2
                 document.getElementById('set2Setup').classList.add('hidden');
                 document.getElementById('set3Setup').classList.remove('hidden');
+
+                // Show immediately with current weather, then silently refresh for wind shifts
                 buildSet3GuidanceBox();
+                const s3VenueData = venues[matchSetup.venue];
+                if (s3VenueData?.location) {
+                    fetchWeather(s3VenueData, matchSetup.orientation)
+                        .then(() => buildSet3GuidanceBox())
+                        .catch(err => console.warn('[SET3] Weather refresh failed:', err));
+                }
             }
         }
         
@@ -4175,23 +4221,29 @@
             const fmt = n => (n >= 0 ? '+' : '') + n.toFixed(1);
 
             ctBox.innerHTML = `
-                <div style="font-weight:bold;margin-bottom:8px;">🎯 Set 3 Coin Toss</div>
-                <div style="padding:10px;background:rgba(255,255,255,0.10);border-left:3px solid white;border-radius:6px;margin-bottom:8px;">
-                    <div style="font-weight:bold;">If you win the toss → ${winBest}</div>
-                    <div style="font-size:0.82em;opacity:0.75;margin-top:3px;">
-                        Side adv: ${fmt(bestAdv)} · Receive adv: ${fmt(recAdvPts)} · ${recAdvText}
+                <div style="background:#981E32;border-radius:8px;padding:14px 16px;">
+                    <div style="font-size:0.7em;letter-spacing:0.08em;color:rgba(255,255,255,0.75);margin-bottom:10px;font-weight:bold;">
+                        SET 3 · COIN TOSS
                     </div>
-                </div>
-                <div style="font-size:0.85em;display:flex;flex-direction:column;gap:4px;margin-bottom:6px;">
-                    <div style="padding:6px 8px;background:rgba(255,255,255,0.06);border-radius:5px;">
-                        If they choose side → <strong>Receive first</strong>
+                    <div style="background:#FFFFFF;border-radius:6px;padding:12px 14px;margin-bottom:10px;">
+                        <div style="font-size:0.68em;letter-spacing:0.06em;color:#000;opacity:0.5;margin-bottom:4px;font-weight:bold;">
+                            TACTICAL RECOMMENDATION
+                        </div>
+                        <div style="font-size:1.15em;font-weight:900;color:#000000;line-height:1.2;">
+                            WIN TOSS → ${winBest.toUpperCase()}
+                        </div>
+                        <div style="font-size:0.75em;color:#000;opacity:0.55;margin-top:5px;">
+                            Side adv: ${fmt(bestAdv)} · Receive adv: ${fmt(recAdvPts)} · ${recAdvText}
+                        </div>
                     </div>
-                    <div style="padding:6px 8px;background:rgba(255,255,255,0.06);border-radius:5px;">
-                        If they choose serve → <strong>Take ${betterSide} side</strong>
+                    <div style="font-size:0.82em;display:flex;flex-direction:column;gap:5px;">
+                        <div style="padding:7px 10px;background:rgba(255,255,255,0.18);border-radius:5px;color:white;">
+                            They choose side → <strong>Receive first</strong>
+                        </div>
+                        <div style="padding:7px 10px;background:rgba(255,255,255,0.18);border-radius:5px;color:white;">
+                            They choose serve → <strong>Take ${betterSide} side</strong>
+                        </div>
                     </div>
-                </div>
-                <div style="font-size:0.78em;opacity:0.5;font-style:italic;">
-                    See Coin Toss tab for full breakdown.
                 </div>`;
         }        
         function set3SelectServing(team, el) {
@@ -5119,6 +5171,7 @@
                 matchId: currentMatchId,
                 setNumber: matchScore.currentSetNumber,
                 gameType: safe(matchSetup.gameType),
+                programId: userProfile?.programId || null,
 
                 // Team info
                 playerName: safe(userProfile.name),
@@ -5251,6 +5304,13 @@
                     player1: { name: safe(matchSetup.opponent1Name), userId: null },
                     player2: { name: safe(matchSetup.opponent2Name), userId: null }
                 },
+                programId: userProfile?.programId || null,
+                currentRecommendation: (() => {
+                    try {
+                        const ct = calculateCoinTossStrategies();
+                        return ct.noData ? null : (ct.winToss?.recommendation || null);
+                    } catch(e) { return null; }
+                })(),
                 updatedAt: firebase.firestore.FieldValue.serverTimestamp()
             });
 
@@ -5435,7 +5495,7 @@
                             <input type="checkbox" ${included ? 'checked' : ''} ${setId ? '' : 'disabled title="Legacy match — no set doc"'}
                                 onchange="event.stopPropagation(); toggleSetIncluded('${setId}', '${match.id}', ${i}, this.checked)"
                                 style="width:15px; height:15px; cursor:${setId ? 'pointer' : 'not-allowed'}; accent-color:#981E32; flex-shrink:0;">
-                            <span style="color:${won ? 'white' : 'rgba(220,80,80,0.9)'}; min-width:110px; ${dimStyle}">${label}</span>
+                            <span style="color:${won ? 'white' : 'rgba(255,255,255,0.65)'}; min-width:110px; ${dimStyle}">${label}</span>
                             <span style="font-weight:bold; ${dimStyle}">${score}</span>
                             ${setId ? '<span style="opacity:0.4; font-size:0.75em; margin-left:auto;">details ›</span>' : '<span style="opacity:0.45; font-size:0.75em; margin-left:4px;">(no detail available)</span>'}
                         </div>`;
@@ -8846,19 +8906,19 @@
                     },
                     theyReceive: {
                         yourChoice: preferredSide + " side",
-                        details: "You have to serve - take the good side"
+                        details: `You must serve — choose ${preferredSide} side`
                     },
                     theySide1: {
                         yourChoice: "RECEIVE first",
-                        details: contextState.side1Name === preferredSide ? 
-                            "They took good side - receive to compensate" :
-                            "They gave you good side - still receive for max advantage"
+                        details: contextState.side1Name === preferredSide ?
+                            `They took ${preferredSide} side — choose receive` :
+                            `They gave you ${preferredSide} side — still choose receive`
                     },
                     theySide2: {
                         yourChoice: "RECEIVE first",
                         details: contextState.side2Name === preferredSide ?
-                            "They took good side - receive to compensate" :
-                            "They gave you good side - still receive for max advantage"
+                            `They took ${preferredSide} side — choose receive` :
+                            `They gave you ${preferredSide} side — still choose receive`
                     }
                 }
             };
@@ -9443,6 +9503,75 @@
             }
             
             console.log('[PARTNERS] Selected paired partner:', selectedPairedPartner);
+        }
+
+        // ── COMMAND CENTER (Coach Read-Only Dashboard) ────────────────────────────
+        let _commandCenterUnsub = null;
+
+        function showCommandCenterScreen() {
+            hideAllScreens();
+            document.getElementById('commandCenterScreen').classList.remove('hidden');
+
+            const pid = userProfile?.programId;
+            document.getElementById('commandCenterProgramId').textContent =
+                pid ? `Program: ${pid}` : 'No Program ID set — edit your profile to add one';
+
+            if (!pid) {
+                document.getElementById('commandCenterGrid').innerHTML =
+                    '<p style="text-align:center; opacity:0.65; margin-top:20px;">Set a Program ID in your profile to monitor matches.</p>';
+                return;
+            }
+
+            document.getElementById('commandCenterGrid').innerHTML =
+                '<p style="text-align:center; opacity:0.65;">Connecting...</p>';
+
+            if (_commandCenterUnsub) { _commandCenterUnsub(); _commandCenterUnsub = null; }
+
+            _commandCenterUnsub = db.collection('matches')
+                .where('programId', '==', pid)
+                .where('complete', '==', false)
+                .onSnapshot(snapshot => {
+                    renderCommandCenter(snapshot.docs);
+                }, err => {
+                    console.error('[CMD CENTER]', err);
+                    document.getElementById('commandCenterGrid').innerHTML =
+                        '<p style="text-align:center; opacity:0.65;">Error loading matches. Check Firestore rules.</p>';
+                });
+        }
+
+        function renderCommandCenter(docs) {
+            const grid = document.getElementById('commandCenterGrid');
+            if (!grid) return;
+
+            if (!docs || docs.length === 0) {
+                grid.innerHTML = '<p style="text-align:center; opacity:0.65; margin-top:20px;">No active matches in this program right now.</p>';
+                return;
+            }
+
+            grid.innerHTML = docs.map(doc => {
+                const d = doc.data();
+                const setNum = d.currentSetNumber || 1;
+                const setScore = d.matchSetsScore ? `${d.matchSetsScore.you}–${d.matchSetsScore.them}` : '–';
+                const rec = d.currentRecommendation || 'Pending data';
+                const p1 = d.playerName || '?';
+                const p2 = d.partnerName || '?';
+                const o1 = d.opponent1Name || '?';
+                const o2 = d.opponent2Name || '?';
+                const venue = d.venue || '—';
+
+                return `
+                    <div style="background:rgba(255,255,255,0.10); border-radius:10px; padding:14px 16px; margin-bottom:12px;">
+                        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+                            <div style="font-weight:bold; font-size:1.05em; color:white;">${p1} & ${p2}</div>
+                            <div style="font-size:0.82em; color:rgba(255,255,255,0.7);">Set ${setNum} &nbsp;|&nbsp; ${setScore}</div>
+                        </div>
+                        <div style="font-size:0.82em; color:rgba(255,255,255,0.6); margin-bottom:10px;">vs ${o1} & ${o2} — ${venue}</div>
+                        <div style="background:rgba(0,0,0,0.25); border-left:3px solid rgba(255,255,255,0.4); border-radius:5px; padding:8px 12px;">
+                            <div style="font-size:0.75em; color:rgba(255,255,255,0.55); letter-spacing:0.04em; margin-bottom:3px;">COIN TOSS RECOMMENDATION</div>
+                            <div style="font-weight:bold; color:white; font-size:0.95em;">${rec}</div>
+                        </div>
+                    </div>`;
+            }).join('');
         }
 
         // ── SoS SIMULATION TEST SUITE ─────────────────────────────────────────────
