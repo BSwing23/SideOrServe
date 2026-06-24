@@ -13,7 +13,7 @@
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            background: linear-gradient(135deg, #981E32 0%, #981E32 50%, #5E6A71 100%);
+            background: #121212;
             min-height: 100vh;
             color: white;
             padding: 10px;
@@ -149,7 +149,7 @@
             background: rgba(255,255,255,0.3);
         }
         .divider span {
-            background: linear-gradient(135deg, #981E32 0%, #981E32 50%, #5E6A71 100%);
+            background: #121212;
             padding: 0 15px;
             position: relative;
         }
@@ -227,15 +227,14 @@
             margin: 20px 0;
         }
         .stat-box {
-            background: rgba(255,255,255,0.05);
+            background: #981E32;
             padding: 15px;
             border-radius: 10px;
-            border-left: 4px solid #981E32;
         }
         .stat-box h3 {
             margin: 0 0 10px 0;
             font-size: 1.1em;
-            color: #981E32;
+            color: white;
         }
         .stat-row {
             display: flex;
@@ -7593,7 +7592,7 @@
                     : (matchSetup?.opponent1Name && matchSetup?.opponent2Name 
                         ? `${matchSetup.opponent1Name} / ${matchSetup.opponent2Name}` 
                         : 'Their team');
-                html += `<div class="stat-row" style="background:rgba(255,180,0,0.2);margin-bottom:10px;">
+                html += `<div class="stat-row" style="background:rgba(255,255,255,0.12);margin-bottom:10px;">
                     <span>⚡ Active run</span>
                     <span><strong>${runTeam}</strong> — ${matchState.currentRun.length} in a row</span>
                 </div>`;
@@ -7626,26 +7625,25 @@
             const lsTotal = m.longestStreak?.total || 0;
             const lsWon   = m.longestStreak?.won   || 0;
             const lsPct   = lsTotal > 0 ? (lsWon / lsTotal * 100).toFixed(0) : null;
-            if (lsPct !== null) {
-                html += `<div style="font-size:0.9em; margin-bottom:10px; padding:8px; background:rgba(255,180,0,0.1); border-radius:6px;">
-                    The pair with the longest streak wins <strong>${lsPct}%</strong> of the time
-                </div>`;
-                html += sampleDisclaimer(lsTotal);
-            }
-            
+
             [3, 4, 5].forEach(len => {
                 const ourTotal   = m.our?.[`run${len}`]?.total  || 0;
                 const ourWon     = m.our?.[`run${len}`]?.won    || 0;
                 const theirTotal = m.their?.[`run${len}`]?.total || 0;
                 const theirWon   = m.their?.[`run${len}`]?.won  || 0;
-                
+
                 const combinedTotal = ourTotal + theirTotal;
                 const combinedWon   = ourWon + theirWon;
                 const pct = combinedTotal > 0 ? (combinedWon / combinedTotal * 100).toFixed(0) : null;
-                
-                html += `<div style="font-size:0.9em; margin-bottom:6px; opacity:0.8;">The team with the longest streak of <strong>${len}+</strong> wins <strong>${pct ? pct + '%' : '—'}</strong> of the time</div>`;
+
+                html += `<div class="stat-row"><span>A streak of ${len}+ wins</span><strong>${pct ? pct + '%' : '—'}</strong></div>`;
                 if (combinedTotal > 0) html += sampleDisclaimer(combinedTotal);
             });
+
+            if (lsPct !== null) {
+                html += `<div class="stat-row"><span>The longest streak wins</span><strong>${lsPct}%</strong></div>`;
+                html += sampleDisclaimer(lsTotal);
+            }
             
             html += `</div>`;
             return html;
@@ -9874,7 +9872,7 @@
 
     <!-- Add Partner Dialog Modal -->
     <div id="addPartnerDialog" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.8); justify-content: center; align-items: center; z-index: 2000;">
-        <div style="background: linear-gradient(135deg, #981E32 0%, #5E6A71 100%); padding: 30px; border-radius: 20px; max-width: 500px; width: 90%; max-height: 80vh; overflow-y: auto; box-shadow: 0 8px 32px rgba(0,0,0,0.5);">
+        <div style="background: #981E32; padding: 30px; border-radius: 20px; max-width: 500px; width: 90%; max-height: 80vh; overflow-y: auto; box-shadow: 0 8px 32px rgba(0,0,0,0.5);">
             <h2 style="margin-top: 0;">🤝 Add Playing Partner</h2>
             
             <p style="margin-bottom: 20px; opacity: 0.9;">Search for your regular playing partner by email.</p>
