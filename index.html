@@ -3841,9 +3841,11 @@
             }
 
             // AUTO-SAVE: finalize set doc first so we get its ID, then push to setsCompleted
+            // IMPORTANT: saveSetToFirestore(true) runs BEFORE updateRPStats so that the set
+            // document always captures the final scores even if RP aggregation throws.
             try {
-                await updateRPStats();
                 await saveSetToFirestore(true);   // finalizes set doc → currentSetId is now set
+                await updateRPStats();
                 const setData = {
                     setNumber: matchScore.currentSetNumber,
                     winner: winner,
