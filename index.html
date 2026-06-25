@@ -780,6 +780,17 @@
             </div>
         </div>
         
+        <h3>🏆 Competition Tier</h3>
+        <div class="form-group">
+            <label for="competitionTierSelect">Competition Level:</label>
+            <select id="competitionTierSelect" onchange="matchSetup.competitionTier = this.value; localStorage.setItem('gasaBeach_lastTier', this.value);" style="width:100%;padding:12px;border-radius:10px;border:none;font-size:1em;background:rgba(255,255,255,0.9);color:#333;">
+                <option value="NCAA_Pro">NCAA / Pro (Tier 1)</option>
+                <option value="Juniors_Elite">Juniors Elite — 16u-18u Club (Tier 2)</option>
+                <option value="Juniors_Dev">Juniors Dev — 12u-14u Club (Tier 3)</option>
+                <option value="Recreational">Recreational (Tier 4)</option>
+            </select>
+        </div>
+
         <h3>🤝 Your Partner</h3>
         <div class="form-group">
             <label for="partnerName">Partner Name:</label>
@@ -1325,6 +1336,7 @@
             orientation: 'North-South',
             preferredSide: null,
             startingSide: null,
+            competitionTier: localStorage.getItem('gasaBeach_lastTier') || 'NCAA_Pro',
             setNumber: 1,
             servingTeam: null,
             yourTeamServer: null,
@@ -1990,6 +2002,7 @@
                 orientation: localStorage.getItem('gasaBeach_lastOrientation') || 'North-South',
                 preferredSide: null,
                 startingSide: null,
+                competitionTier: localStorage.getItem('gasaBeach_lastTier') || 'NCAA_Pro',
                 setNumber: 1,
                 servingTeam: null,
                 yourTeamServer: null,
@@ -1997,6 +2010,9 @@
                 roles: { opponent1: null, opponent2: null, player: null, partner: null }
             };
             
+            const tierEl = document.getElementById('competitionTierSelect');
+            if (tierEl) tierEl.value = matchSetup.competitionTier;
+
             document.querySelectorAll('.role-option').forEach(el => el.classList.remove('selected'));
             document.getElementById('yourTeamServerSelector').classList.add('hidden');
             document.getElementById('theirTeamServerSelector').classList.add('hidden');
@@ -3489,6 +3505,8 @@
                 snap.docs.forEach(doc => {
                     const d = doc.data();
                     if (!d.complete || !d.serverStats) return;
+                    const _faTier = matchSetup.competitionTier;
+                    if (_faTier && d.competitionTier !== _faTier) return;
                     ['you', 'partner', 'opp1', 'opp2'].forEach(key => {
                         totals[key].ps          += d.serverStats[key]?.ps          || 0;
                         totals[key].totalServes += d.serverStats[key]?.totalServes || 0;
@@ -3561,8 +3579,10 @@
             document.getElementById('winProbIfWin').textContent  = `▲ Win next: ${Math.round(winProbIfWin)}%`;
             document.getElementById('winProbIfLose').textContent = `▼ Lose next: ${Math.round(winProbIfLose)}%`;
 
-            // Streak wins % from all-time rpStats
-            const ls = userProfile?.rpStats?.momentum?.longestStreak;
+            // Streak wins % from all-time rpStats (tier-aware with legacy fallback)
+            const _lsTier = matchSetup?.competitionTier || 'NCAA_Pro';
+            const ls = userProfile?.rpStats?.[_lsTier]?.momentum?.longestStreak
+                    || userProfile?.rpStats?.momentum?.longestStreak;
             const streakEl = document.getElementById('streakWinStat');
             if (ls?.total >= 1) {
                 const pct = Math.round(ls.won / ls.total * 100);
@@ -4874,162 +4894,159 @@
                 else maxTheirRun = Math.max(maxTheirRun, curRun);
             });
             
+            // Tier-isolated write path — all rpStats are namespaced under competitionTier
+            const tier = matchSetup.competitionTier || 'NCAA_Pro';
+
             // Build the update object
             const updates = {};
-            
+
             // RP averages — primary set type
-            updates[`rpStats.${setType}.ourTeam.totalRPs`] = firebase.firestore.FieldValue.increment(ourRPs);
-            updates[`rpStats.${setType}.ourTeam.count`] = firebase.firestore.FieldValue.increment(1);
-            updates[`rpStats.${setType}.opponents.totalRPs`] = firebase.firestore.FieldValue.increment(theirRPs);
-            updates[`rpStats.${setType}.opponents.count`] = firebase.firestore.FieldValue.increment(1);
-            
+            updates[`rpStats.${tier}.${setType}.ourTeam.totalRPs`] = firebase.firestore.FieldValue.increment(ourRPs);
+            updates[`rpStats.${tier}.${setType}.ourTeam.count`] = firebase.firestore.FieldValue.increment(1);
+            updates[`rpStats.${tier}.${setType}.opponents.totalRPs`] = firebase.firestore.FieldValue.increment(theirRPs);
+            updates[`rpStats.${tier}.${setType}.opponents.count`] = firebase.firestore.FieldValue.increment(1);
+
             if (weWon) {
-                updates[`rpStats.${setType}.winners.totalRPs`] = firebase.firestore.FieldValue.increment(ourRPs);
-                updates[`rpStats.${setType}.winners.count`] = firebase.firestore.FieldValue.increment(1);
-                updates[`rpStats.${setType}.losers.totalRPs`] = firebase.firestore.FieldValue.increment(theirRPs);
-                updates[`rpStats.${setType}.losers.count`] = firebase.firestore.FieldValue.increment(1);
+                updates[`rpStats.${tier}.${setType}.winners.totalRPs`] = firebase.firestore.FieldValue.increment(ourRPs);
+                updates[`rpStats.${tier}.${setType}.winners.count`] = firebase.firestore.FieldValue.increment(1);
+                updates[`rpStats.${tier}.${setType}.losers.totalRPs`] = firebase.firestore.FieldValue.increment(theirRPs);
+                updates[`rpStats.${tier}.${setType}.losers.count`] = firebase.firestore.FieldValue.increment(1);
             } else {
-                updates[`rpStats.${setType}.winners.totalRPs`] = firebase.firestore.FieldValue.increment(theirRPs);
-                updates[`rpStats.${setType}.winners.count`] = firebase.firestore.FieldValue.increment(1);
-                updates[`rpStats.${setType}.losers.totalRPs`] = firebase.firestore.FieldValue.increment(ourRPs);
-                updates[`rpStats.${setType}.losers.count`] = firebase.firestore.FieldValue.increment(1);
+                updates[`rpStats.${tier}.${setType}.winners.totalRPs`] = firebase.firestore.FieldValue.increment(theirRPs);
+                updates[`rpStats.${tier}.${setType}.winners.count`] = firebase.firestore.FieldValue.increment(1);
+                updates[`rpStats.${tier}.${setType}.losers.totalRPs`] = firebase.firestore.FieldValue.increment(ourRPs);
+                updates[`rpStats.${tier}.${setType}.losers.count`] = firebase.firestore.FieldValue.increment(1);
             }
-            
+
             // V15: if this was a 21-pt set with a virtual15 capture, also record into sets15
             if (setType === 'sets21' && matchState.virtual15Captured && matchState.virtual15) {
                 const v = matchState.virtual15;
                 const v15OurRPs   = v.actualRPs?.our   || 0;
                 const v15TheirRPs = v.actualRPs?.their || 0;
-                // Winner at V15 threshold = whoever was leading at that point
                 const v15WeWinning = v.actualScore.our > v.actualScore.their;
-                updates['rpStats.sets15.ourTeam.totalRPs'] = firebase.firestore.FieldValue.increment(v15OurRPs);
-                updates['rpStats.sets15.ourTeam.count'] = firebase.firestore.FieldValue.increment(1);
-                updates['rpStats.sets15.opponents.totalRPs'] = firebase.firestore.FieldValue.increment(v15TheirRPs);
-                updates['rpStats.sets15.opponents.count'] = firebase.firestore.FieldValue.increment(1);
+                updates[`rpStats.${tier}.sets15.ourTeam.totalRPs`] = firebase.firestore.FieldValue.increment(v15OurRPs);
+                updates[`rpStats.${tier}.sets15.ourTeam.count`] = firebase.firestore.FieldValue.increment(1);
+                updates[`rpStats.${tier}.sets15.opponents.totalRPs`] = firebase.firestore.FieldValue.increment(v15TheirRPs);
+                updates[`rpStats.${tier}.sets15.opponents.count`] = firebase.firestore.FieldValue.increment(1);
                 if (v15WeWinning) {
-                    updates['rpStats.sets15.winners.totalRPs'] = firebase.firestore.FieldValue.increment(v15OurRPs);
-                    updates['rpStats.sets15.winners.count'] = firebase.firestore.FieldValue.increment(1);
-                    updates['rpStats.sets15.losers.totalRPs'] = firebase.firestore.FieldValue.increment(v15TheirRPs);
-                    updates['rpStats.sets15.losers.count'] = firebase.firestore.FieldValue.increment(1);
+                    updates[`rpStats.${tier}.sets15.winners.totalRPs`] = firebase.firestore.FieldValue.increment(v15OurRPs);
+                    updates[`rpStats.${tier}.sets15.winners.count`] = firebase.firestore.FieldValue.increment(1);
+                    updates[`rpStats.${tier}.sets15.losers.totalRPs`] = firebase.firestore.FieldValue.increment(v15TheirRPs);
+                    updates[`rpStats.${tier}.sets15.losers.count`] = firebase.firestore.FieldValue.increment(1);
                 } else {
-                    updates['rpStats.sets15.winners.totalRPs'] = firebase.firestore.FieldValue.increment(v15TheirRPs);
-                    updates['rpStats.sets15.winners.count'] = firebase.firestore.FieldValue.increment(1);
-                    updates['rpStats.sets15.losers.totalRPs'] = firebase.firestore.FieldValue.increment(v15OurRPs);
-                    updates['rpStats.sets15.losers.count'] = firebase.firestore.FieldValue.increment(1);
+                    updates[`rpStats.${tier}.sets15.winners.totalRPs`] = firebase.firestore.FieldValue.increment(v15TheirRPs);
+                    updates[`rpStats.${tier}.sets15.winners.count`] = firebase.firestore.FieldValue.increment(1);
+                    updates[`rpStats.${tier}.sets15.losers.totalRPs`] = firebase.firestore.FieldValue.increment(v15OurRPs);
+                    updates[`rpStats.${tier}.sets15.losers.count`] = firebase.firestore.FieldValue.increment(1);
                 }
                 if (isCompetitive) {
-                    updates['rpStats.sets15.totalPointsSum'] = firebase.firestore.FieldValue.increment(v.totalPoints || 30);
-                    updates['rpStats.sets15.competitiveCount'] = firebase.firestore.FieldValue.increment(1);
+                    updates[`rpStats.${tier}.sets15.totalPointsSum`] = firebase.firestore.FieldValue.increment(v.totalPoints || 30);
+                    updates[`rpStats.${tier}.sets15.competitiveCount`] = firebase.firestore.FieldValue.increment(1);
                 }
-
-                // V15: also track serve/receive and role battle for sets15
-                // Use same serve/receive outcome as the parent 21-pt set
                 if (servingTeamWon) {
-                    updates['rpStats.sets15.servingTeamWins'] = firebase.firestore.FieldValue.increment(1);
-                    updates['rpStats.sets15.servedFirst.total'] = firebase.firestore.FieldValue.increment(1);
-                    updates['rpStats.sets15.servedFirst.won'] = firebase.firestore.FieldValue.increment(1);
+                    updates[`rpStats.${tier}.sets15.servingTeamWins`] = firebase.firestore.FieldValue.increment(1);
+                    updates[`rpStats.${tier}.sets15.servedFirst.total`] = firebase.firestore.FieldValue.increment(1);
+                    updates[`rpStats.${tier}.sets15.servedFirst.won`] = firebase.firestore.FieldValue.increment(1);
                 } else {
-                    updates['rpStats.sets15.receivingTeamWins'] = firebase.firestore.FieldValue.increment(1);
-                    updates['rpStats.sets15.receivedFirst.total'] = firebase.firestore.FieldValue.increment(1);
-                    updates['rpStats.sets15.receivedFirst.won'] = firebase.firestore.FieldValue.increment(1);
+                    updates[`rpStats.${tier}.sets15.receivingTeamWins`] = firebase.firestore.FieldValue.increment(1);
+                    updates[`rpStats.${tier}.sets15.receivedFirst.total`] = firebase.firestore.FieldValue.increment(1);
+                    updates[`rpStats.${tier}.sets15.receivedFirst.won`] = firebase.firestore.FieldValue.increment(1);
                 }
-
-                // V15: role battle — use same matchup outcome as parent set
                 if (blockerMatchupWinner === 'our') {
-                    updates['rpStats.sets15.roleBattle.blocker.total'] = firebase.firestore.FieldValue.increment(1);
-                    if (weWon) updates['rpStats.sets15.roleBattle.blocker.won'] = firebase.firestore.FieldValue.increment(1);
+                    updates[`rpStats.${tier}.sets15.roleBattle.blocker.total`] = firebase.firestore.FieldValue.increment(1);
+                    if (weWon) updates[`rpStats.${tier}.sets15.roleBattle.blocker.won`] = firebase.firestore.FieldValue.increment(1);
                 }
                 if (defenderMatchupWinner === 'our') {
-                    updates['rpStats.sets15.roleBattle.defender.total'] = firebase.firestore.FieldValue.increment(1);
-                    if (weWon) updates['rpStats.sets15.roleBattle.defender.won'] = firebase.firestore.FieldValue.increment(1);
+                    updates[`rpStats.${tier}.sets15.roleBattle.defender.total`] = firebase.firestore.FieldValue.increment(1);
+                    if (weWon) updates[`rpStats.${tier}.sets15.roleBattle.defender.won`] = firebase.firestore.FieldValue.increment(1);
                 }
             }
-            
+
             // Serve/receive wins
             if (servingTeamWon) {
-                updates[`rpStats.${setType}.servingTeamWins`] = firebase.firestore.FieldValue.increment(1);
-                updates['rpStats.servingTeamWins'] = firebase.firestore.FieldValue.increment(1);
+                updates[`rpStats.${tier}.${setType}.servingTeamWins`] = firebase.firestore.FieldValue.increment(1);
+                updates[`rpStats.${tier}.servingTeamWins`] = firebase.firestore.FieldValue.increment(1);
             } else {
-                updates[`rpStats.${setType}.receivingTeamWins`] = firebase.firestore.FieldValue.increment(1);
-                updates['rpStats.receivingTeamWins'] = firebase.firestore.FieldValue.increment(1);
+                updates[`rpStats.${tier}.${setType}.receivingTeamWins`] = firebase.firestore.FieldValue.increment(1);
+                updates[`rpStats.${tier}.receivingTeamWins`] = firebase.firestore.FieldValue.increment(1);
             }
-            
+
             // Total points played (for switch math averages) — competitive only
             if (isCompetitive) {
-                updates[`rpStats.${setType}.totalPointsSum`] = firebase.firestore.FieldValue.increment(totalPoints);
-                updates[`rpStats.${setType}.competitiveCount`] = firebase.firestore.FieldValue.increment(1);
+                updates[`rpStats.${tier}.${setType}.totalPointsSum`] = firebase.firestore.FieldValue.increment(totalPoints);
+                updates[`rpStats.${tier}.${setType}.competitiveCount`] = firebase.firestore.FieldValue.increment(1);
             }
-            
+
             // Role matchup stats
-            updates[`rpStats.${setType}.roles.ourBlocker.totalPS`] = firebase.firestore.FieldValue.increment(ourBlockerPS);
-            updates[`rpStats.${setType}.roles.ourBlocker.count`] = firebase.firestore.FieldValue.increment(1);
-            updates[`rpStats.${setType}.roles.ourDefender.totalPS`] = firebase.firestore.FieldValue.increment(ourDefenderPS);
-            updates[`rpStats.${setType}.roles.ourDefender.count`] = firebase.firestore.FieldValue.increment(1);
-            updates[`rpStats.${setType}.roles.theirBlocker.totalPS`] = firebase.firestore.FieldValue.increment(theirBlockerPS);
-            updates[`rpStats.${setType}.roles.theirBlocker.count`] = firebase.firestore.FieldValue.increment(1);
-            updates[`rpStats.${setType}.roles.theirDefender.totalPS`] = firebase.firestore.FieldValue.increment(theirDefenderPS);
-            updates[`rpStats.${setType}.roles.theirDefender.count`] = firebase.firestore.FieldValue.increment(1);
-            
+            updates[`rpStats.${tier}.${setType}.roles.ourBlocker.totalPS`] = firebase.firestore.FieldValue.increment(ourBlockerPS);
+            updates[`rpStats.${tier}.${setType}.roles.ourBlocker.count`] = firebase.firestore.FieldValue.increment(1);
+            updates[`rpStats.${tier}.${setType}.roles.ourDefender.totalPS`] = firebase.firestore.FieldValue.increment(ourDefenderPS);
+            updates[`rpStats.${tier}.${setType}.roles.ourDefender.count`] = firebase.firestore.FieldValue.increment(1);
+            updates[`rpStats.${tier}.${setType}.roles.theirBlocker.totalPS`] = firebase.firestore.FieldValue.increment(theirBlockerPS);
+            updates[`rpStats.${tier}.${setType}.roles.theirBlocker.count`] = firebase.firestore.FieldValue.increment(1);
+            updates[`rpStats.${tier}.${setType}.roles.theirDefender.totalPS`] = firebase.firestore.FieldValue.increment(theirDefenderPS);
+            updates[`rpStats.${tier}.${setType}.roles.theirDefender.count`] = firebase.firestore.FieldValue.increment(1);
+
             // Blocker/Defender matchup correlation
             if (blockerMatchupWinner !== 'tie') {
-                updates[`rpStats.${setType}.roles.blockerMatchup.total`] = firebase.firestore.FieldValue.increment(1);
+                updates[`rpStats.${tier}.${setType}.roles.blockerMatchup.total`] = firebase.firestore.FieldValue.increment(1);
                 if (blockerMatchupWinner === 'our' && weWon) {
-                    updates[`rpStats.${setType}.roles.blockerMatchup.ourWinAndWon`] = firebase.firestore.FieldValue.increment(1);
+                    updates[`rpStats.${tier}.${setType}.roles.blockerMatchup.ourWinAndWon`] = firebase.firestore.FieldValue.increment(1);
                 }
             }
             if (defenderMatchupWinner !== 'tie') {
-                updates[`rpStats.${setType}.roles.defenderMatchup.total`] = firebase.firestore.FieldValue.increment(1);
+                updates[`rpStats.${tier}.${setType}.roles.defenderMatchup.total`] = firebase.firestore.FieldValue.increment(1);
                 if (defenderMatchupWinner === 'our' && weWon) {
-                    updates[`rpStats.${setType}.roles.defenderMatchup.ourWinAndWon`] = firebase.firestore.FieldValue.increment(1);
+                    updates[`rpStats.${tier}.${setType}.roles.defenderMatchup.ourWinAndWon`] = firebase.firestore.FieldValue.increment(1);
                 }
             }
-            
-            // Role battle win % — when YOUR blocker/defender wins PS battle, did you win the set?
+
+            // Role battle win %
             if (blockerMatchupWinner === 'our') {
-                updates[`rpStats.${setType}.roleBattle.blocker.total`] = firebase.firestore.FieldValue.increment(1);
-                if (weWon) updates[`rpStats.${setType}.roleBattle.blocker.won`] = firebase.firestore.FieldValue.increment(1);
+                updates[`rpStats.${tier}.${setType}.roleBattle.blocker.total`] = firebase.firestore.FieldValue.increment(1);
+                if (weWon) updates[`rpStats.${tier}.${setType}.roleBattle.blocker.won`] = firebase.firestore.FieldValue.increment(1);
             }
             if (defenderMatchupWinner === 'our') {
-                updates[`rpStats.${setType}.roleBattle.defender.total`] = firebase.firestore.FieldValue.increment(1);
-                if (weWon) updates[`rpStats.${setType}.roleBattle.defender.won`] = firebase.firestore.FieldValue.increment(1);
+                updates[`rpStats.${tier}.${setType}.roleBattle.defender.total`] = firebase.firestore.FieldValue.increment(1);
+                if (weWon) updates[`rpStats.${tier}.${setType}.roleBattle.defender.won`] = firebase.firestore.FieldValue.increment(1);
             }
 
             // Serve/receive first win % — YOUR team specifically
             if (firstServer === 'your') {
-                updates[`rpStats.${setType}.servedFirst.total`] = firebase.firestore.FieldValue.increment(1);
-                if (weWon) updates[`rpStats.${setType}.servedFirst.won`] = firebase.firestore.FieldValue.increment(1);
+                updates[`rpStats.${tier}.${setType}.servedFirst.total`] = firebase.firestore.FieldValue.increment(1);
+                if (weWon) updates[`rpStats.${tier}.${setType}.servedFirst.won`] = firebase.firestore.FieldValue.increment(1);
             } else {
-                updates[`rpStats.${setType}.receivedFirst.total`] = firebase.firestore.FieldValue.increment(1);
-                if (weWon) updates[`rpStats.${setType}.receivedFirst.won`] = firebase.firestore.FieldValue.increment(1);
+                updates[`rpStats.${tier}.${setType}.receivedFirst.total`] = firebase.firestore.FieldValue.increment(1);
+                if (weWon) updates[`rpStats.${tier}.${setType}.receivedFirst.won`] = firebase.firestore.FieldValue.increment(1);
             }
 
-            // Side bias — total points by compass direction regardless of which team was on that side
+            // Side bias — isolated per tier
             (matchState.completedSegments || []).forEach(seg => {
                 if (seg.side) {
                     const compassKey = seg.side.toLowerCase();
                     const totalPts = (seg.ourPoints || 0) + (seg.theirPoints || 0);
-                    updates[`rpStats.sidePoints.${compassKey}`] = firebase.firestore.FieldValue.increment(totalPts);
+                    updates[`rpStats.${tier}.sidePoints.${compassKey}`] = firebase.firestore.FieldValue.increment(totalPts);
                 }
             });
 
-            // Momentum — run correlation (sets where max run reached 3/4/5 and who won)
+            // Momentum — isolated per tier
             [3, 4, 5].forEach(runLen => {
                 if (maxOurRun >= runLen) {
-                    updates[`rpStats.momentum.our.run${runLen}.total`] = firebase.firestore.FieldValue.increment(1);
-                    if (weWon) updates[`rpStats.momentum.our.run${runLen}.won`] = firebase.firestore.FieldValue.increment(1);
+                    updates[`rpStats.${tier}.momentum.our.run${runLen}.total`] = firebase.firestore.FieldValue.increment(1);
+                    if (weWon) updates[`rpStats.${tier}.momentum.our.run${runLen}.won`] = firebase.firestore.FieldValue.increment(1);
                 }
                 if (maxTheirRun >= runLen) {
-                    updates[`rpStats.momentum.their.run${runLen}.total`] = firebase.firestore.FieldValue.increment(1);
-                    if (!weWon) updates[`rpStats.momentum.their.run${runLen}.won`] = firebase.firestore.FieldValue.increment(1);
+                    updates[`rpStats.${tier}.momentum.their.run${runLen}.total`] = firebase.firestore.FieldValue.increment(1);
+                    if (!weWon) updates[`rpStats.${tier}.momentum.their.run${runLen}.won`] = firebase.firestore.FieldValue.increment(1);
                 }
             });
-            
-            // Longest streak: team with longer max run — did they win?
+
+            // Longest streak — isolated per tier
             if (maxOurRun !== maxTheirRun) {
-                updates['rpStats.momentum.longestStreak.total'] = firebase.firestore.FieldValue.increment(1);
+                updates[`rpStats.${tier}.momentum.longestStreak.total`] = firebase.firestore.FieldValue.increment(1);
                 const longestStreakTeamWon = (maxOurRun > maxTheirRun && weWon) || (maxTheirRun > maxOurRun && !weWon);
                 if (longestStreakTeamWon) {
-                    updates['rpStats.momentum.longestStreak.won'] = firebase.firestore.FieldValue.increment(1);
+                    updates[`rpStats.${tier}.momentum.longestStreak.won`] = firebase.firestore.FieldValue.increment(1);
                 }
             }
             
@@ -5190,6 +5207,7 @@
                 preferredSide: safe(matchSetup.preferredSide),
                 startingSide: safe(matchSetup.startingSide),
                 sideNote: safe(matchSetup.sideNote),
+                competitionTier: safe(matchSetup.competitionTier || 'NCAA_Pro'),
                 // Use the locked set-start snapshot — not live weather at save time
                 beaufortForce: matchState.weatherAtSetStart?.beaufortForce ?? safe(matchSetup.weather?.beaufortForce),
                 swingleScale: matchState.weatherAtSetStart?.swingleScale ?? safe(matchSetup.weather?.beaufortForce),
@@ -6792,6 +6810,8 @@
                     snap.docs.forEach(doc => {
                         const d = doc.data();
                         if (!d.complete) return;
+                        const _todayTier = matchSetup.competitionTier;
+                        if (_todayTier && d.competitionTier !== _todayTier) return;
                         const ts = d.createdAt?.toDate ? d.createdAt.toDate() : new Date(d.createdAt || 0);
                         if (ts < todayStart) return;
                         processedSetIds.add(doc.id);
@@ -6951,7 +6971,9 @@
             }
             
             // ── ALL SECTIONS — same for every scope/type permutation ────────
-            const stats = userProfile?.rpStats;
+            // Pull tier-specific rpStats bucket; fall back to legacy untiered root for pre-tier data
+            const _dataTier = matchSetup.competitionTier || 'NCAA_Pro';
+            const stats = userProfile?.rpStats?.[_dataTier] || userProfile?.rpStats;
             const isLiveScope = currentDataScope === 'thisSet' || currentDataScope === 'thisMatch';
             const isHistScope = currentDataScope === 'today' || currentDataScope === 'allTime';
 
@@ -7313,6 +7335,8 @@
                     if (!setData.complete) return;
                     if (setData.includedInStats === false) return;
                     if (!setData.completedSegments?.length) return;
+                    const _saTier = matchSetup.competitionTier;
+                    if (_saTier && setData.competitionTier !== _saTier) return;
                     const vid = setData.venueId;
                     if (!vid) return;
                     if (competitive && !isCompetitiveSet(setData.ourScore, setData.theirScore, setData.gameType === 'deciding' ? 15 : 21)) return;
@@ -7536,9 +7560,11 @@
                     playerStats[name].sets++;
                 };
 
+                const _spTier = matchSetup.competitionTier;
                 snapshot.docs.forEach(doc => {
                     const d = doc.data();
                     if (!d.complete) return;
+                    if (_spTier && d.competitionTier !== _spTier) return;
                     // Set type filter — deciding = 15pt, else 21pt
                     const isDeciding = d.gameType === 'deciding';
                     if (currentSetType === '15' && !isDeciding) return;
@@ -7564,13 +7590,22 @@
                     return playerStats[nb].ps - playerStats[na].ps;
                 });
 
+                // Identify top PS% server for ★ badge
+                const topPSRate = Math.max(...sorted.map(([, s]) => s.serves > 0 ? s.ps / s.serves : -1));
+                const starredServer = topPSRate > 0
+                    ? (sorted.find(([, s]) => s.serves > 0 && Math.abs(s.ps / s.serves - topPSRate) < 0.0001)?.[0] || '')
+                    : '';
+
                 const rows = sorted.map(([name, s], i) => {
-                    const psPerServe = s.serves > 0 ? (s.ps / s.serves).toFixed(2) : '—';
-                    const psPerTurn  = s.turns  > 0 ? (s.ps / s.turns).toFixed(2)  : '—';
-                    const bg = i % 2 === 0 ? 'background:rgba(152,30,50,0.2);' : '';
+                    const psPct     = s.serves > 0 ? Math.round(s.ps / s.serves * 100) : null;
+                    const psPerTurn = s.turns  > 0 ? (s.ps / s.turns).toFixed(2) : '—';
+                    const isStar    = name === starredServer && psPct !== null;
+                    const bg        = i % 2 === 0 ? 'background:rgba(152,30,50,0.2);' : '';
+                    const nameLabel = name === yourName ? `<strong>${name}</strong>` : name;
+                    const starBadge = isStar ? ' <span style="color:white;">★</span>' : '';
                     return `<div class="stat-row" style="${bg}">
-                        <span>${name === yourName ? `<strong>${name}</strong>` : name} <span style="opacity:0.55;font-size:0.8em;">(${s.role||'?'})</span></span>
-                        <span style="font-size:0.9em;">P/S: <strong>${psPerServe}</strong> &nbsp; P/T: <strong>${psPerTurn}</strong></span>
+                        <span>${nameLabel}${starBadge} <span style="opacity:0.55;font-size:0.8em;">(${s.role||'?'})</span></span>
+                        <span style="font-size:0.9em;">PS%: <strong>${psPct !== null ? psPct + '%' : '—'}</strong> &nbsp; P/T: <strong>${psPerTurn}</strong></span>
                     </div>`;
                 }).join('');
 
@@ -7832,36 +7867,38 @@
 
             const winBest = scenA_net >= scenB_net ? 'A' : 'B';
 
-            // Determine recommendation state (mirrors calculateCoinTossStrategies priority tree)
+            // Determine recommendation state from the extras engine results
             const currentSwingle = matchSetup.weather?.beaufortForce ?? 0;
-            const sideAdvantagePoints = Math.abs(sideAdv1 - sideAdv2);
-            const sideBeatsReceive = sideAdvantagePoints > recAdvPts;
-            const windOverride = currentSwingle >= 4;
             const recState = !receiveAdv ? 'zero'
-                           : (sideBeatsReceive && windOverride) ? 'B_side'
-                           : (sideBeatsReceive && !windOverride) ? 'C_receive'
+                           : strategies.recommendSide ? 'B_side'
                            : 'D_receive';
 
-            // Dynamic player name for State B — highest PS server
+            // Identify highest PS% server — used for hero directive (State B) and tactical note
             let topServerName = '';
-            if (recState === 'B_side') {
+            {
                 const ss = matchState.serverStats || {};
-                const players = [
-                    { name: matchSetup.playerName, ps: ss.you?.ps || 0, turns: ss.you?.servingTurns || 1 },
-                    { name: matchSetup.partnerName, ps: ss.partner?.ps || 0, turns: ss.partner?.servingTurns || 1 },
-                ];
-                const best = players.sort((a,b) => (b.ps/b.turns) - (a.ps/a.turns))[0];
-                topServerName = best?.name || '';
+                const youTurns     = ss.you?.servingTurns     || 0;
+                const partnerTurns = ss.partner?.servingTurns || 0;
+                if (youTurns > 0 || partnerTurns > 0) {
+                    const youRate     = youTurns     > 0 ? (ss.you?.ps     || 0) / youTurns     : 0;
+                    const partnerRate = partnerTurns > 0 ? (ss.partner?.ps || 0) / partnerTurns : 0;
+                    topServerName = youRate >= partnerRate ? (matchSetup.playerName || '') : (matchSetup.partnerName || '');
+                }
             }
 
-            // Hero directive text
+            // Hero directive text — State B uses preferredStartSide (may differ from betterSide when quotient is odd)
+            const preferredStartSideDisp = strategies.preferredStartSide || betterSide;
             const heroText = recState === 'B_side' && topServerName
-                ? `PUT ${topServerName.toUpperCase()} ON THE ${betterSide.toUpperCase()} SIDE`
+                ? `PUT ${topServerName.toUpperCase()} ON THE ${preferredStartSideDisp.toUpperCase()} SIDE`
                 : 'CHOOSE RECEIVE FIRST';
             const heroColor = 'white';
 
-            // "Why?" detail text
+            // "Why?" detail text — extras engine outputs surfaced here
             const whyId = 'sos-why-' + Date.now();
+            const extrasAdv = strategies.extrasAdvantage ?? 0;
+            const recFirstAdv = strategies.receiveFirstAdvantage;
+            const qtnt = strategies.quotient ?? 0;
+            const rem  = strategies.remainder ?? 0;
             let whyLines = [];
             if (recState === 'zero') {
                 whyLines = [
@@ -7871,25 +7908,18 @@
                 ];
             } else if (recState === 'B_side') {
                 whyLines = [
-                    `State B: Side override active.`,
-                    `Observed side advantage: ${sideAdvantagePoints.toFixed(2)} pts > Receive advantage: ${recAdvPts.toFixed(2)} pts.`,
-                    `Swingle ${currentSwingle} ≥ 4 — wind is distorting play enough to justify override.`,
-                    `${betterSide} side P7 differential: ${fmt(Math.max(sideAdv1,sideAdv2))}.`,
-                    receiveAdv ? `Receive: ${receiveAdv.receivePct.toFixed(1)}% of RPs needed (n=${receiveAdv.sampleSize}, ${receiveAdv.source}).` : '',
-                ];
-            } else if (recState === 'C_receive') {
-                whyLines = [
-                    `State C: Side data shows +${sideAdvantagePoints.toFixed(2)} pts advantage for ${betterSide} side.`,
-                    `However, Swingle ${currentSwingle} < 4 — wind is not strong enough to distort play.`,
-                    `Receive structural edge holds: ${recAdvPts.toFixed(2)} pts.`,
-                    receiveAdv ? `Receive: need ${receiveAdv.receivePct.toFixed(1)}% of RPs vs ${receiveAdv.servePct.toFixed(1)}% serving (n=${receiveAdv.sampleSize}).` : '',
+                    `Extras engine: quotient ${qtnt} (${qtnt % 2 === 0 ? 'even → finish same side as start' : 'odd → finish opposite side'}).`,
+                    `Start ${preferredStartSideDisp} → set tail (${rem.toFixed(1)} pts) lands on ${strategies.betterSideName || betterSide}.`,
+                    `Extras advantage: ${extrasAdv.toFixed(3)} > receive threshold: ${recFirstAdv !== null ? recFirstAdv.toFixed(3) : '—'} (rpsToWin = ${receiveAdv?.rpsToWin ?? '—'}).`,
+                    strategies.starredServer ? `★ ${strategies.starredServer} must serve first.` : '',
+                    receiveAdv ? `Receive baseline: ${receiveAdv.receivePct.toFixed(1)}% of RPs needed to win receiving (n=${receiveAdv.sampleSize}, ${receiveAdv.source}).` : '',
                 ];
             } else {
                 whyLines = [
-                    `State D: Receive advantage wins on points.`,
-                    `Receive: ${recAdvPts.toFixed(2)} pts > Side advantage: ${sideAdvantagePoints.toFixed(2)} pts.`,
-                    receiveAdv ? `Need ${receiveAdv.receivePct.toFixed(1)}% of RPs to win receiving vs ${receiveAdv.servePct.toFixed(1)}% serving (n=${receiveAdv.sampleSize}, ${receiveAdv.source}).` : '',
-                    `${betterSide} side still preferred if you lose the toss.`,
+                    `Extras engine: quotient ${qtnt} (${qtnt % 2 === 0 ? 'even' : 'odd'}) · remainder ${rem.toFixed(1)} pts.`,
+                    `Extras advantage ${extrasAdv.toFixed(3)} ≤ receive threshold ${recFirstAdv !== null ? recFirstAdv.toFixed(3) : '—'} (rpsToWin = ${receiveAdv?.rpsToWin ?? '—'}).`,
+                    receiveAdv ? `Receive: need ${receiveAdv.receivePct.toFixed(1)}% of RPs to win receiving vs ${receiveAdv.servePct.toFixed(1)}% serving (n=${receiveAdv.sampleSize}, ${receiveAdv.source}).` : '',
+                    `Take ${betterSide} side if you lose the toss.`,
                 ];
             }
             const whyHtml = whyLines.filter(Boolean).map(l =>
@@ -7947,8 +7977,10 @@
             const rpsToWin = receiveAdv?.rpsToWin || null;
             const recSrc = receiveAdv?.source ? `from ${receiveAdv.source}${receiveAdv.sampleSize > 0 ? ` (n=${receiveAdv.sampleSize})` : ''}` : '';
 
-            // Win % record from rpStats
-            const rpSt = userProfile?.rpStats?.[isSet3 ? 'sets15' : 'sets21'];
+            // Win % record from rpStats (tier-aware with legacy fallback)
+            const _ctTier = matchSetup?.competitionTier || 'NCAA_Pro';
+            const rpSt = userProfile?.rpStats?.[_ctTier]?.[isSet3 ? 'sets15' : 'sets21']
+                      || userProfile?.rpStats?.[isSet3 ? 'sets15' : 'sets21'];
             const rW = rpSt?.receivedFirst?.won ?? rpSt?.receivingTeamWins ?? 0;
             const rT = rpSt?.receivedFirst?.total ?? ((rpSt?.servingTeamWins||0)+(rpSt?.receivingTeamWins||0));
             const sW = rpSt?.servedFirst?.won ?? rpSt?.servingTeamWins ?? 0;
@@ -7975,6 +8007,12 @@
                         ${whyHtml}
                     </div>
                 </div>
+
+                ${(recState !== 'B_side' && topServerName) ? `
+                <!-- STARRED SERVER TACTICAL NOTE -->
+                <div style="padding:10px 14px;margin-bottom:12px;background:rgba(255,255,255,0.08);border-radius:8px;border-left:3px solid white;">
+                    <span style="font-size:0.85em;color:white;">★ <strong>${topServerName}</strong> has the highest PS% — deploy them for your team's critical serving rotations</span>
+                </div>` : ''}
 
                 <!-- IF YOU LOSE THE TOSS -->
                 <div class="stat-box" style="border-left-color:rgba(200,50,50,0.5);margin-bottom:12px;">
@@ -8689,9 +8727,10 @@
             // Always use all-time average loser RPs from rpStats — never recent set history.
             // Recent sets are too small a sample to set the Points-to-Win baseline reliably.
             if (userProfile?.rpStats) {
-                const stats = userProfile.rpStats;
+                const tier = matchSetup?.competitionTier || 'NCAA_Pro';
+                const tierStats = userProfile.rpStats[tier] || userProfile.rpStats;
                 const isDeciding = matchState?.gameType === 'deciding';
-                const bucket = isDeciding ? stats.sets15 : stats.sets21;
+                const bucket = isDeciding ? tierStats.sets15 : tierStats.sets21;
                 if (bucket?.losers?.count >= 1) {
                     const avg = bucket.losers.totalRPs / bucket.losers.count;
                     return {
@@ -8844,54 +8883,92 @@
             );
             
             const sideAdvantagePoints = Math.abs(advStartingSide1 - advStartingSide2);
-            const preferredSide = advStartingSide1 > advStartingSide2 ? contextState.side1Name : contextState.side2Name;
 
-            // ── PRIORITY TREE ─────────────────────────────────────────────────
-            // Receive First is the structural default.
-            // Side only wins if BOTH conditions are true:
-            //   1. Observed net side advantage > observed receive advantage in points
-            //   2. Swingle Scale >= 4 (13+ mph — wind is meaningfully distorting play)
-            // A light breeze never overrides the receive structural edge.
+            // ── ODD / EVEN QUOTIENT ENGINE ────────────────────────────────────
+            // quotient = number of full 7-pt (or 5-pt) rotation blocks in the set.
+            // remainder = extra points after the last full block.
+            // Even quotient → team finishes on the SAME side they started.
+            // Odd quotient  → team finishes on the OPPOSITE side.
+            const quotient  = Math.floor(projectedTotal / switchInterval);
+            const remainder = projectedTotal % switchInterval;
 
-            const currentSwingle = matchSetup.weather?.beaufortForce ?? 0;
-            const SIDE_OVERRIDE_WIND_THRESHOLD = 4; // Swingle 4 = 13+ mph
+            // Identify physically better side (higher team P7 differential).
+            const side1IsBetter = scaledDiff1 >= scaledDiff2;
+            const betterSideName = side1IsBetter ? contextState.side1Name : contextState.side2Name;
+            const p7Delta = Math.abs(scaledDiff1 - scaledDiff2); // magnitude of side bias per block
 
-            const sideBeatsReceiveInPoints = sideAdvantagePoints > receiveAdvantagePoints;
-            const windJustifiesOverride    = currentSwingle >= SIDE_OVERRIDE_WIND_THRESHOLD;
-            const recommendSide            = sideBeatsReceiveInPoints && windJustifiesOverride;
+            // Extras advantage = per-point rate × extra points in the tail.
+            // Always a positive magnitude; sign determined by which side the tail lands on.
+            const ptRate = switchInterval > 0 ? p7Delta / switchInterval : 0;
+            const extrasAdvantage = ptRate * remainder;
+
+            // Starting side that places the remainder ON the better side:
+            //   Even quotient → start on better side (finish = same = better).
+            //   Odd quotient  → start on worse side  (finish = opposite = better).
+            const preferredStartSide = (quotient % 2 === 0)
+                ? betterSideName
+                : (betterSideName === contextState.side1Name ? contextState.side2Name : contextState.side1Name);
+
+            // betterSideName is used for lose-toss scenarios (always pick the physically superior side).
+            const preferredSide = betterSideName;
+
+            // Dynamic receive threshold: (rpsToWin − 1) / rpsToWin
+            const rpsResultCT = calculateRPsToWin();
+            const rpsToWinCT  = rpsResultCT?.value ?? null;
+            const receiveFirstAdvantage = rpsToWinCT ? (rpsToWinCT - 1) / rpsToWinCT : null;
+
+            // CHOOSE SIDE when extras advantage exceeds the receive threshold and
+            // there IS a tail to exploit (remainder === 0 → perfectly equal exposure → always receive).
+            const recommendSide = receiveFirstAdvantage !== null
+                && remainder > 0
+                && extrasAdvantage > receiveFirstAdvantage;
+
+            // Starred server: top PS% player on our team — named in tactical note when side is chosen.
+            const _ss = matchState.serverStats || {};
+            const _youT = _ss.you?.servingTurns     || 0;
+            const _parT = _ss.partner?.servingTurns || 0;
+            let starredServer = '';
+            if (_youT > 0 || _parT > 0) {
+                const _youR = _youT > 0 ? (_ss.you?.ps     || 0) / _youT : 0;
+                const _parR = _parT > 0 ? (_ss.partner?.ps || 0) / _parT : 0;
+                starredServer = _youR >= _parR ? (matchSetup.playerName || '') : (matchSetup.partnerName || '');
+            }
 
             let winTossChoice, winTossReason, winTossDetails;
 
             if (!receiveAdv) {
-                // Zero data state — structural default, always receive
                 winTossChoice = 'RECEIVE first';
                 winTossReason = 'Structural default — receive requires one fewer real point to win';
                 winTossDetails = 'No match data yet. Receive first is always the correct baseline.';
             } else if (recommendSide) {
-                winTossChoice = `${preferredSide} side`;
-                winTossReason = `Side advantage (${sideAdvantagePoints.toFixed(1)} pts) > Receive advantage (${receiveAdvantagePoints.toFixed(1)} pts) at Swingle ${currentSwingle}`;
-                winTossDetails = `Strong wind and observed side bias together override the receive structural edge.`;
-            } else if (sideBeatsReceiveInPoints && !windJustifiesOverride) {
-                // Side data says take the side but wind isn't strong enough to justify it
-                winTossChoice = 'RECEIVE first';
-                winTossReason = `Receive structural edge holds — Swingle ${currentSwingle} wind below override threshold`;
-                winTossDetails = `Side shows +${sideAdvantagePoints.toFixed(1)} pts but wind (Swingle ${currentSwingle}) is insufficient to override receive advantage.`;
+                winTossChoice = `${preferredStartSide} side`;
+                winTossReason = `Extras ${extrasAdvantage.toFixed(2)} > receive threshold ${receiveFirstAdvantage.toFixed(2)} — ${remainder.toFixed(1)} tail pts land on ${betterSideName}`;
+                winTossDetails = `Quotient ${quotient} (${quotient % 2 === 0 ? 'even' : 'odd'}) → start ${preferredStartSide}, set finishes on ${betterSideName}.${starredServer ? ` ★ ${starredServer} must serve first.` : ''}`;
             } else {
                 winTossChoice = 'RECEIVE first';
-                winTossReason = `Receive advantage (${receiveAdvantagePoints.toFixed(1)} pts) > Side advantage (${sideAdvantagePoints.toFixed(1)} pts)`;
-                winTossDetails = `Receiving requires one fewer real point to win. Take ${preferredSide} side if you lose the toss.`;
+                winTossReason = `Receive threshold ${receiveFirstAdvantage !== null ? receiveFirstAdvantage.toFixed(2) : '—'} ≥ extras advantage ${extrasAdvantage.toFixed(2)}`;
+                winTossDetails = `Take ${preferredSide} side if you lose the toss.`;
             }
-            
+
             return {
                 noData: false,
                 p7Data: p7Data,
                 receiveAdvantagePoints: receiveAdvantagePoints,
-                receiveAdv: receiveAdv,  // Add the full receive advantage object
+                receiveAdv: receiveAdv,
                 sideAdvantagePoints: sideAdvantagePoints,
-                preferredSide: preferredSide,
+                preferredSide: preferredSide,           // physically better side — lose-toss default
+                preferredStartSide: preferredStartSide, // starting position that exploits the tail
                 advStartingSide1: advStartingSide1,
                 advStartingSide2: advStartingSide2,
-                contextState: contextState,  // Include context state for display
+                contextState: contextState,
+                // Extras engine outputs
+                quotient,
+                remainder,
+                extrasAdvantage,
+                receiveFirstAdvantage,
+                betterSideName,
+                starredServer,
+                recommendSide,
                 winToss: {
                     recommendation: winTossChoice,
                     reasoning: winTossReason,
