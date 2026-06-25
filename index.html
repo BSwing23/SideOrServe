@@ -3863,11 +3863,12 @@
             }
             
             // Show set complete alert
-            const setScoreText = `${matchScore.yourSetsWon}-${matchScore.theirSetsWon}`;
+            const _usLabel = [matchSetup.playerName, matchSetup.partnerName].filter(Boolean).join('/') || 'You';
+            const _themLabel = [matchSetup.opponent1Name, matchSetup.opponent2Name].filter(Boolean).join('/') || 'Them';
             if (winner === 'you') {
-                alert(`Set ${matchScore.currentSetNumber} complete! You won ${winnerScore}-${loserScore}!\n\nSET SCORE: You ${setScoreText}`);
+                alert(`Set ${matchScore.currentSetNumber} complete! ${_usLabel} won ${winnerScore}-${loserScore}!\n\nMATCH SCORE: ${_usLabel} ${matchScore.yourSetsWon}-${matchScore.theirSetsWon} ${_themLabel}`);
             } else {
-                alert(`Set ${matchScore.currentSetNumber} complete! They won ${winnerScore}-${loserScore}.\n\nSET SCORE: ${setScoreText}`);
+                alert(`Set ${matchScore.currentSetNumber} complete! ${_themLabel} won ${winnerScore}-${loserScore}.\n\nMATCH SCORE: ${_usLabel} ${matchScore.yourSetsWon}-${matchScore.theirSetsWon} ${_themLabel}`);
             }
             
             // Check if match is complete (best of 3)
@@ -7876,7 +7877,7 @@
             // Identify highest PS% server — used for hero directive (State B) and tactical note
             let topServerName = '';
             {
-                const ss = matchState.serverStats || {};
+                const ss = matchState.servers || {};
                 const youTurns     = ss.you?.servingTurns     || 0;
                 const partnerTurns = ss.partner?.servingTurns || 0;
                 if (youTurns > 0 || partnerTurns > 0) {
@@ -7893,38 +7894,86 @@
                 : 'CHOOSE RECEIVE FIRST';
             const heroColor = 'white';
 
-            // "Why?" detail text — extras engine outputs surfaced here
+            // "Why?" detail text — coach-friendly 4-scenario layout
             const whyId = 'sos-why-' + Date.now();
-            const extrasAdv = strategies.extrasAdvantage ?? 0;
-            const recFirstAdv = strategies.receiveFirstAdvantage;
             const qtnt = strategies.quotient ?? 0;
             const rem  = strategies.remainder ?? 0;
-            let whyLines = [];
-            if (recState === 'zero') {
-                whyLines = [
-                    'No match data yet.',
-                    'Structural basis: receiving requires one fewer real point to win.',
-                    'Example: with N=7 real points to win, receive needs 53.8% of RPs vs 58.3% serving — a 4.5% edge.',
-                ];
-            } else if (recState === 'B_side') {
-                whyLines = [
-                    `Extras engine: quotient ${qtnt} (${qtnt % 2 === 0 ? 'even → finish same side as start' : 'odd → finish opposite side'}).`,
-                    `Start ${preferredStartSideDisp} → set tail (${rem.toFixed(1)} pts) lands on ${strategies.betterSideName || betterSide}.`,
-                    `Extras advantage: ${extrasAdv.toFixed(3)} > receive threshold: ${recFirstAdv !== null ? recFirstAdv.toFixed(3) : '—'} (rpsToWin = ${receiveAdv?.rpsToWin ?? '—'}).`,
-                    strategies.starredServer ? `★ ${strategies.starredServer} must serve first.` : '',
-                    receiveAdv ? `Receive baseline: ${receiveAdv.receivePct.toFixed(1)}% of RPs needed to win receiving (n=${receiveAdv.sampleSize}, ${receiveAdv.source}).` : '',
-                ];
-            } else {
-                whyLines = [
-                    `Extras engine: quotient ${qtnt} (${qtnt % 2 === 0 ? 'even' : 'odd'}) · remainder ${rem.toFixed(1)} pts.`,
-                    `Extras advantage ${extrasAdv.toFixed(3)} ≤ receive threshold ${recFirstAdv !== null ? recFirstAdv.toFixed(3) : '—'} (rpsToWin = ${receiveAdv?.rpsToWin ?? '—'}).`,
-                    receiveAdv ? `Receive: need ${receiveAdv.receivePct.toFixed(1)}% of RPs to win receiving vs ${receiveAdv.servePct.toFixed(1)}% serving (n=${receiveAdv.sampleSize}, ${receiveAdv.source}).` : '',
-                    `Take ${betterSide} side if you lose the toss.`,
-                ];
+
+            // P7 scores per side for score cards
+            const _t1 = p7.avgOurSide1 + p7.avgTheirSide1;
+            const _t2 = p7.avgOurSide2 + p7.avgTheirSide2;
+            const _betterT = (betterSide === ctx.side1Name ? _t1 : _t2) || 0;
+            const _worseT  = (betterSide === ctx.side1Name ? _t2 : _t1) || 0;
+            const _p5Sfx  = isDecidingDisp ? ' | P5 = ' + (_betterT * 5 / 7).toFixed(2) : '';
+            const _p5SfxW = isDecidingDisp ? ' | P5 = ' + (_worseT  * 5 / 7).toFixed(2) : '';
+
+            // Wind character per side
+            let _betterWind = '', _worseWind = '';
+            if (matchSetup.weather && matchSetup.weather.windComponents) {
+                const _wc = matchSetup.weather.windComponents;
+                const _bW = _wc[(betterSide || '').toLowerCase()] || {};
+                const _wW = _wc[(worseSide  || '').toLowerCase()] || {};
+                const _wChar = function(w) {
+                    const t = (w.type || '').toLowerCase();
+                    return t.includes('tail') ? 'Leeward / With the wind'
+                         : t.includes('head') ? 'Windward / Into the wind'
+                         : t.includes('cross') ? 'Crosswind' : '';
+                };
+                _betterWind = _wChar(_bW);
+                _worseWind  = _wChar(_wW);
             }
-            const whyHtml = whyLines.filter(Boolean).map(l =>
-                `<div style="padding:4px 0;font-size:0.85em;opacity:0.8;border-bottom:1px solid rgba(255,255,255,0.06);">${l}</div>`
-            ).join('');
+            const _bWStr = _betterWind ? ' (' + _betterWind + ')' : '';
+            const _wWStr = _worseWind  ? ' (' + _worseWind  + ')' : '';
+
+            // Exposure: points on each side if we start on betterSide (scenario 2 — naive choice)
+            const _sAPts = Math.ceil(qtnt / 2) * switchInterval + (qtnt % 2 === 0 ? rem : 0);
+            const _sBPts = Math.round(projectedTotal) - _sAPts;
+            const _finishWorse = qtnt > 0 && qtnt % 2 !== 0;
+            const _catchText = (_finishWorse && rem > 0 && recState !== 'B_side')
+                ? ' <strong>Catch:</strong> Final ' + rem + ' pts on ' + worseSide + _wWStr + ' — harder side at crunch time.'
+                : '';
+
+            // Projected score context for header
+            const _maxPts  = isDecidingDisp ? 15 : 21;
+            const _projLose = Math.round(projectedTotal) - _maxPts;
+            const _scoreCtx = _projLose > 0 ? _maxPts + '-' + _projLose + ' projected finish' : 'projected match';
+
+            // Highlight markers
+            const _sc1Bg  = recState !== 'B_side' ? 'rgba(255,255,255,0.10)' : 'rgba(255,255,255,0.06)';
+            const _sc1Brd = recState !== 'B_side' ? 'rgba(255,255,255,0.6)'  : 'rgba(255,255,255,0.2)';
+            const _sc1Lbl = recState !== 'B_side' ? ' — Best Choice' : '';
+            const _sc2Bg  = recState === 'B_side' ? 'rgba(255,255,255,0.10)' : 'rgba(255,255,255,0.06)';
+            const _sc2Brd = recState === 'B_side' ? 'rgba(255,255,255,0.6)'  : 'rgba(255,255,255,0.2)';
+            const _sc2Lbl = recState === 'B_side' ? ' — Best Choice' : '';
+
+            const whyHtml = recState === 'zero'
+                ? '<div style="font-size:0.85em;opacity:0.8;line-height:1.5;"><div style="margin-bottom:6px;">No match data yet — structural basis only.</div><div>Receiving first requires one fewer real-point break to win. Example: N=7 RPs to win → receive needs 53.8% of RPs vs 58.3% serving — a 4.5% structural edge.</div></div>'
+                : `<div style="font-size:0.85em;color:white;line-height:1.55;">
+                    <div style="font-weight:bold;letter-spacing:0.04em;margin-bottom:8px;padding-bottom:5px;border-bottom:1px solid rgba(255,255,255,0.2);">THE RAW MATH: WHY IT SAYS THIS</div>
+                    <div style="margin-bottom:10px;">
+                        <div style="font-size:0.88em;font-weight:bold;opacity:0.6;margin-bottom:5px;text-transform:uppercase;letter-spacing:0.03em;">Our Score Cards (Points per rotation block)</div>
+                        <div style="padding:5px 8px;background:rgba(255,255,255,0.06);border-radius:4px;margin-bottom:3px;">• <strong>${betterSide}</strong>${_bWStr}<br>&nbsp;&nbsp;P7 = ${_betterT.toFixed(2)}${_p5Sfx}</div>
+                        <div style="padding:5px 8px;background:rgba(255,255,255,0.06);border-radius:4px;margin-bottom:5px;">• <strong>${worseSide}</strong>${_wWStr}<br>&nbsp;&nbsp;P7 = ${_worseT.toFixed(2)}${_p5SfxW}</div>
+                        <div style="font-size:0.82em;opacity:0.5;font-style:italic;">A higher P score means structurally easier to score on that side.</div>
+                    </div>
+                    <div style="border-top:1px solid rgba(255,255,255,0.12);padding-top:7px;margin-bottom:7px;font-size:0.88em;font-weight:bold;opacity:0.6;text-transform:uppercase;letter-spacing:0.03em;">The 4 Choices (${_scoreCtx})</div>
+                    <div style="margin-bottom:7px;padding:6px 8px;background:${_sc1Bg};border-left:2px solid ${_sc1Brd};border-radius:4px;">
+                        <div style="font-weight:bold;margin-bottom:2px;">1. We win toss → Receive first${_sc1Lbl}</div>
+                        <div style="opacity:0.85;">Passing first lets our best hitters build offensive rhythm immediately — biggest statistical head start on the scoreboard.</div>
+                    </div>
+                    <div style="margin-bottom:7px;padding:6px 8px;background:${_sc2Bg};border-left:2px solid ${_sc2Brd};border-radius:4px;">
+                        <div style="font-weight:bold;margin-bottom:2px;">2. We win toss → Choose ${betterSide} side first${_sc2Lbl}</div>
+                        <div style="opacity:0.85;">Switch every ${switchInterval} pts: ${_sAPts} pts on ${betterSide}, ${_sBPts} pts on ${worseSide}.${_catchText}</div>
+                    </div>
+                    <div style="margin-bottom:7px;padding:6px 8px;background:rgba(255,255,255,0.06);border-left:2px solid rgba(255,255,255,0.2);border-radius:4px;">
+                        <div style="font-weight:bold;margin-bottom:2px;">3. They win toss → They choose side (We receive first)</div>
+                        <div style="opacity:0.85;">We receive first. We start on ${worseSide}${_wWStr} — our serve-receive sequence breaks their serve immediately.</div>
+                    </div>
+                    <div style="padding:6px 8px;background:rgba(255,255,255,0.06);border-left:2px solid rgba(255,255,255,0.2);border-radius:4px;">
+                        <div style="font-weight:bold;margin-bottom:2px;">4. They win toss → They choose serve (We take ${betterSide} side)</div>
+                        <div style="opacity:0.85;">We take ${betterSide}${_bWStr} — use the advantage to build an early lead in the first ${switchInterval} points.</div>
+                    </div>
+                </div>`;
 
 
             function scenRow(label, sublabel, net, isWin, isBest) {
@@ -8924,7 +8973,7 @@
                 && extrasAdvantage > receiveFirstAdvantage;
 
             // Starred server: top PS% player on our team — named in tactical note when side is chosen.
-            const _ss = matchState.serverStats || {};
+            const _ss = matchState.servers || {};
             const _youT = _ss.you?.servingTurns     || 0;
             const _parT = _ss.partner?.servingTurns || 0;
             let starredServer = '';
