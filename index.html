@@ -1265,6 +1265,7 @@
             return tip;
         }
         let currentMatchId = null;
+        let viewingMatchId = null;
         let currentSetId = null;
         let currentServerStatsScope = 'thisSet';  // 'thisSet', 'thisMatch', 'allTime'
         
@@ -5793,6 +5794,7 @@
 
         async function viewMatchDetail(matchId) {
             currentMatchId = matchId;
+            viewingMatchId = matchId;
             hideAllScreens();
             document.getElementById('matchDetailScreen').classList.remove('hidden');
             document.getElementById('matchDetailContent').innerHTML = '<p style="opacity:0.6; text-align:center; padding:20px;">Loading...</p>';
@@ -5946,6 +5948,7 @@
                     return;
                 }
                 const d = sd.data();
+                viewingMatchId = d.matchId || null;
                 const setLabel = d.setNumber === 3 ? 'Set 3 (Deciding)' : `Set ${d.setNumber || 1}`;
                 const won = d.winnerTeam === 'our';
                 const winLabel = won ? `<span style="color:white; font-weight:bold;">✓ Win</span>` : `<span style="opacity:0.6;">Loss</span>`;
@@ -6041,18 +6044,9 @@
         }
 
         async function deleteCurrentMatch() {
-            if (!currentMatchId) return;
-            
-            if (confirm('Are you sure you want to delete this match? This cannot be undone.')) {
-                try {
-                    // Top-level match doc kept; only user subcollection reference removed
-                    alert('Match deleted successfully');
-                    showMatchHistory();
-                } catch (error) {
-                    console.error('Error deleting match:', error);
-                    alert('Error deleting match. Please try again.');
-                }
-            }
+            const matchId = currentMatchId || viewingMatchId;
+            if (!matchId) return;
+            await deleteMatch(matchId);
         }
 
         // Compass Functions
