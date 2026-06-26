@@ -760,19 +760,6 @@
         </div>
         
         <div class="form-group">
-            <label>Which side do you prefer?</label>
-            <div class="role-selector" id="preferredSideSelector">
-                <div class="role-option" onclick="selectPreferredSide('North')">North</div>
-                <div class="role-option" onclick="selectPreferredSide('South')">South</div>
-            </div>
-        </div>
-        
-        <div class="form-group">
-            <label for="sideNote">Why do you prefer this side? (optional):</label>
-            <textarea id="sideNote" placeholder="e.g., Wind at back, sun behind us"></textarea>
-        </div>
-        
-        <div class="form-group">
             <label>Which side are you starting on?</label>
             <div class="role-selector" id="startingSideSelector">
                 <div class="role-option" onclick="selectStartingSide('North')">North</div>
@@ -1335,7 +1322,6 @@
             venue: 'bear-down-beach',
             venueName: 'Bear Down Beach (University of Arizona)',
             orientation: 'North-South',
-            preferredSide: null,
             startingSide: null,
             competitionTier: localStorage.getItem('gasaBeach_lastTier') || 'NCAA_Pro',
             setNumber: 1,
@@ -2001,7 +1987,6 @@
                 venue: lastVenue,
                 venueName: lastVenueName,
                 orientation: localStorage.getItem('gasaBeach_lastOrientation') || 'North-South',
-                preferredSide: null,
                 startingSide: null,
                 competitionTier: localStorage.getItem('gasaBeach_lastTier') || 'NCAA_Pro',
                 setNumber: 1,
@@ -2933,12 +2918,6 @@
             const orientation = document.getElementById('courtOrientation').value;
             const sides = orientation.split('-');
             
-            // Update preferred side selector
-            const advSelector = document.getElementById('preferredSideSelector');
-            advSelector.innerHTML = sides.map(side => 
-                `<div class="role-option" onclick="selectPreferredSide('${side}')">${side}</div>`
-            ).join('');
-            
             // Update starting side selector
             const startSelector = document.getElementById('startingSideSelector');
             startSelector.innerHTML = sides.map(side => 
@@ -2946,14 +2925,6 @@
             ).join('');
             
             matchSetup.orientation = orientation;
-        }
-
-        function selectPreferredSide(side) {
-            matchSetup.preferredSide = side;
-            document.querySelectorAll('#preferredSideSelector .role-option').forEach(el => {
-                el.classList.remove('selected');
-                if (el.textContent === side) el.classList.add('selected');
-            });
         }
 
         function selectStartingSide(side) {
@@ -3039,10 +3010,6 @@
                 showMatchError('Please select roles for you and your partner');
                 return;
             }
-            if (!matchSetup.preferredSide) {
-                showMatchError('Please select which side you prefer');
-                return;
-            }
             if (!matchSetup.startingSide) {
                 showMatchError('Please select which side you are starting on');
                 return;
@@ -3063,7 +3030,6 @@
             matchSetup.partnerName = partnerName;
             matchSetup.opponent1Name = opp1Name;
             matchSetup.opponent2Name = opp2Name;
-            matchSetup.sideNote = document.getElementById('sideNote').value.trim();
             
             // Save names for autocomplete in future matches
             if (yourName) {
@@ -4790,9 +4756,7 @@
             const remainder = totalPoints % switchInterval;
             
             // Determine who started on preferred side
-            const preferredSide = matchSetup.preferredSide;
-            const startingSide = matchSetup.startingSide;
-            const weStartOnAS = (startingSide === preferredSide);
+            const weStartOnAS = true; // starting side is treated as advantaged side
             
             // Calculate segment distribution for every-5
             let ourSegmentsOnAS, ourSegmentsOnOther;
@@ -5208,9 +5172,7 @@
                 venueId: safe(matchSetup.venue),
                 venueLocation: venueData ? safe(venueData.location) : null,
                 orientation: safe(matchSetup.orientation),
-                preferredSide: safe(matchSetup.preferredSide),
                 startingSide: safe(matchSetup.startingSide),
-                sideNote: safe(matchSetup.sideNote),
                 competitionTier: safe(matchSetup.competitionTier || 'NCAA_Pro'),
                 // Use the locked set-start snapshot — not live weather at save time
                 beaufortForce: matchState.weatherAtSetStart?.beaufortForce ?? safe(matchSetup.weather?.beaufortForce),
@@ -7404,15 +7366,19 @@
                         const totalPts = sp.our + sp.their;
                         const ourPct = totalPts > 0 ? (sp.our / totalPts * 100).toFixed(1) : '—';
                         const theirPct = totalPts > 0 ? (sp.their / totalPts * 100).toFixed(1) : '—';
-                        const avgOur   = sp.segments > 0 ? (sp.our   / sp.segments).toFixed(1) : '—';
-                        const avgTheir = sp.segments > 0 ? (sp.their / sp.segments).toFixed(1) : '—';
+                        const avgOur   = sp.segments > 0 ? sp.our   / sp.segments : null;
+                        const avgTheir = sp.segments > 0 ? sp.their / sp.segments : null;
+                        const p7net    = avgOur !== null ? avgOur - avgTheir : null;
+                        const avgOurStr   = avgOur   !== null ? avgOur.toFixed(1)   : '—';
+                        const avgTheirStr = avgTheir !== null ? avgTheir.toFixed(1) : '—';
+                        const p7netStr    = p7net    !== null ? (p7net >= 0 ? '+' : '') + p7net.toFixed(1) : '—';
                         html += `
                             <div style="background:rgba(255,255,255,0.05);border-radius:6px;padding:10px;margin-bottom:6px;">
                                 <div style="font-weight:bold;margin-bottom:6px;">${side} Side</div>
                                 <div class="stat-row"><span>Your pair wins</span><span><strong>${ourPct}%</strong> of points</span></div>
                                 <div class="stat-row"><span>Opp pair wins</span><span><strong>${theirPct}%</strong> of points</span></div>
-                                <div class="stat-row" style="font-size:0.85em;opacity:0.8;"><span>Your P7 avg</span><span><strong>${avgOur}</strong></span></div>
-                                <div class="stat-row" style="font-size:0.85em;opacity:0.8;"><span>Opp P7 avg</span><span><strong>${avgTheir}</strong></span></div>
+                                <div class="stat-row" style="font-size:0.85em;opacity:0.8;"><span>Your P7 avg</span><span><strong>${avgOurStr}</strong> vs ${avgTheirStr}</span></div>
+                                <div class="stat-row" style="font-size:0.85em;"><span>P7 edge</span><span><strong>${p7netStr}</strong> pts/seg</span></div>
                             </div>`;
                     });
                     
@@ -9736,12 +9702,12 @@
             function buildSetup(gameType, swingleForce) {
                 return {
                     venue: 'sim', venueName: 'Simulation Court', orientation: 'North-South',
-                    preferredSide: 'North', startingSide: 'North',
+                    startingSide: 'North',
                     setNumber: 3, servingTeam: 'our', yourTeamServer: 'you', opponentServer: 'opp1',
                     roles: { player: 'blocker', partner: 'defender', opponent1: 'blocker', opponent2: 'defender' },
                     yourName: 'SimPlayer', partnerName: 'SimPartner',
                     opponent1Name: 'Opp1', opponent2Name: 'Opp2',
-                    sideNote: '', gameType: gameType,
+                    gameType: gameType,
                     weather: { beaufortForce: swingleForce, windSpeed: swingleForce * 4, windDescription: 'Simulated', windDir: 90 }
                 };
             }
@@ -9912,7 +9878,6 @@
                 // switches = floor(27/5) = 5, remainder = 2.
 
                 matchSetup = buildSetup('normal', 0);
-                matchSetup.preferredSide = 'North';
                 matchSetup.startingSide = 'North';
 
                 matchState = buildIdleState('normal');
