@@ -3832,7 +3832,7 @@
             }
             
             // Show set complete alert
-            const _usLabel = [matchSetup.playerName, matchSetup.partnerName].filter(Boolean).join('/') || 'You';
+            const _usLabel = [matchSetup.yourName, matchSetup.partnerName].filter(Boolean).join('/') || 'You';
             const _themLabel = [matchSetup.opponent1Name, matchSetup.opponent2Name].filter(Boolean).join('/') || 'Them';
             if (winner === 'you') {
                 alert(`Set ${matchScore.currentSetNumber} complete! ${_usLabel} won ${winnerScore}-${loserScore}!\n\nMATCH SCORE: ${_usLabel} ${matchScore.yourSetsWon}-${matchScore.theirSetsWon} ${_themLabel}`);
@@ -6340,238 +6340,9 @@
         }
         
         function updateSetupCoinTossDisplay() {
-            const content = document.getElementById('setupCoinTossContent');
-            
-            if (!matchSetup.weather || !matchSetup.weather.windSpeed) {
-                content.innerHTML = `
-                    <div class="stat-box" style="text-align: center; padding: 40px;">
-                        <p style="font-size: 1.1em; opacity: 0.8;">Weather data not available</p>
-                        <p style="font-size: 0.9em; margin-top: 10px;">Select a venue on the Setup tab to load coin toss analysis</p>
-                    </div>
-                `;
-                return;
-            }
-            
-            // Reuse coin toss display logic - call updateCoinTossDisplay but redirect output
-            // For now, just show the recommendation similar to what fetchWeather generates
-            const weatherData = matchSetup.weather;
-            const orientation = matchSetup.orientation;
-            const windAnalysis = calculateWindDirection(weatherData.windDegrees, orientation);
-            const beaufortLevel = getBeaufortLevel(weatherData.windSpeed);
-            const beaufortInfo = beaufortData[beaufortLevel];
-            
-            let html = `
-                <div class="stat-box">
-                    <h3>🎯 COIN TOSS RECOMMENDATION</h3>
-                    <div style="font-size: 0.9em; margin-bottom: 20px; opacity: 0.9;">
-                        Based on current wind conditions at ${matchSetup.venueName}
-                    </div>
-            `;
-            
-            if (beaufortLevel >= 3 && !windAnalysis.crosswind) {
-                html += `
-                    <div style="background: rgba(152,30,50,0.3); padding: 20px; border-radius: 10px; text-align: center; margin-bottom: 20px;">
-                        <div style="font-size: 2em; font-weight: bold; margin: 15px 0; color: white;">
-                            CHOOSE ${windAnalysis.tailwindSide.toUpperCase()} SIDE
-                        </div>
-                        <div style="font-size: 1.1em; margin-bottom: 15px;">
-                            <strong>Wind: ${weatherData.windSpeed} mph from ${weatherData.windDirection}</strong> (Swingle Scale ${beaufortLevel})
-                        </div>
-                        <div style="background: rgba(255,255,255,0.1); padding: 15px; border-radius: 8px; margin-top: 15px;">
-                            <div style="font-weight: bold; margin-bottom: 8px;">Why ${windAnalysis.tailwindSide}?</div>
-                            <div style="font-size: 0.95em;">
-                                • Serving with tailwind: ${fmtDistSigned(beaufortInfo.effects.serving.tailwindIncrease)} deeper serves<br>
-                                • Ball carries with more pace and pressure<br>
-                                • ${windAnalysis.headwindSide} side serves drop ${fmtDist(beaufortInfo.effects.serving.headwindReduction)} shorter
-                            </div>
-                        </div>
-                    </div>
-                    
-                    <div style="background: rgba(255,255,255,0.05); padding: 15px; border-radius: 8px;">
-                        <div style="font-weight: bold; margin-bottom: 10px;">SIDE ADVANTAGE:</div>
-                        <div class="stat-row">
-                            <span>${windAnalysis.tailwindSide} side (tailwind):</span>
-                            <span style="color: white;"><strong>${fmtDistSigned(beaufortInfo.effects.serving.tailwindIncrease)} serve distance</strong></span>
-                        </div>
-                        <div class="stat-row">
-                            <span>${windAnalysis.headwindSide} side (headwind):</span>
-                            <span style="color: #FF5722;"><strong>${fmtDistSigned(-beaufortInfo.effects.serving.headwindReduction)} serve distance</strong></span>
-                        </div>
-                        <div class="stat-row" style="background: rgba(152,30,50,0.2); margin-top: 10px;">
-                            <span><strong>Estimated advantage:</strong></span>
-                            <span><strong>1-3 points per set</strong></span>
-                        </div>
-                    </div>
-                `;
-            } else if (windAnalysis.crosswind) {
-                const crosswindImpact = beaufortLevel >= 4 ? 
-                    `At ${weatherData.windSpeed} mph, crosswind significantly affects float serves and high sets — neither side has a tailwind advantage, but wind will be a major factor in play.` :
-                    beaufortLevel >= 3 ?
-                    `At ${weatherData.windSpeed} mph, crosswind will affect float serves and high balls. Neither side has a clear advantage.` :
-                    `Light crosswind — minimal effect on play.`;
-                const crosswindEmoji = beaufortLevel >= 5 ? '💨💨' : beaufortLevel >= 4 ? '💨' : '🌬️';
-                html += `
-                    <div style="background: rgba(152,30,50,0.3); padding: 20px; border-radius: 10px; text-align: center;">
-                        <div style="font-size: 1.3em; font-weight: bold; margin-bottom: 10px;">
-                            ${crosswindEmoji} CROSSWIND DETECTED
-                        </div>
-                        <div style="font-size: 1em; margin-bottom: 10px;">
-                            Wind: ${weatherData.windSpeed} mph ${weatherData.windDirection} (Swingle Scale ${beaufortLevel})
-                        </div>
-                        <div style="font-size: 0.95em;">
-                            ${crosswindImpact}<br>
-                            Choose side based on sun position or court familiarity.
-                        </div>
-                    </div>
-                `;
-            } else {
-                html += `
-                    <div style="background: rgba(152,30,50,0.3); padding: 20px; border-radius: 10px; text-align: center;">
-                        <div style="font-size: 1.3em; font-weight: bold; margin-bottom: 10px;">
-                            🟢 MINIMAL WIND IMPACT
-                        </div>
-                        <div style="font-size: 1em; margin-bottom: 10px;">
-                            Wind: ${weatherData.windSpeed} mph (Swingle Scale ${beaufortLevel})
-                        </div>
-                        <div style="font-size: 0.95em;">
-                            Wind will not significantly affect play.<br>
-                            Choose based on sun position or court familiarity.
-                        </div>
-                    </div>
-                `;
-            }
-            
-            html += `
-                    <div style="background: rgba(255,255,255,0.05); padding: 15px; border-radius: 8px; margin-top: 20px;">
-                        <div style="font-weight: bold; margin-bottom: 10px;">📊 RECEIVE FIRST ADVANTAGE:</div>
-                        ${(() => {
-                            // Use actual match data if we have completed sets
-                            const setsPlayed = matchScore.setsCompleted.length;
-                            const stats = userProfile && userProfile.rpStats;
-                            const totalServeWins = stats ? (stats.servingTeamWins || 0) : 0;
-                            const totalReceiveWins = stats ? (stats.receivingTeamWins || 0) : 0;
-                            const totalGames = totalServeWins + totalReceiveWins;
-                            
-                            // Build this-match summary from completed sets
-                            let matchSummaryHtml = '';
-                            if (setsPlayed > 0) {
-                                const matchLines = matchScore.setsCompleted.map((set, i) => {
-                                    const servingTeamWon = (set.matchSetup.servingTeam === 'your' && set.matchState.ourScore > set.matchState.theirScore) ||
-                                                           (set.matchSetup.servingTeam === 'their' && set.matchState.theirScore > set.matchState.ourScore);
-                                    return `Set ${i+1}: ${servingTeamWon ? 'Serving' : 'Receiving'} team won (${set.matchState.ourScore}-${set.matchState.theirScore})`;
-                                });
-                                matchSummaryHtml = `
-                                    <div style="margin-bottom: 10px; padding: 10px; background: rgba(152,30,50,0.2); border-radius: 6px; font-size: 0.9em;">
-                                        <strong>This match:</strong><br>
-                                        ${matchLines.join('<br>')}
-                                    </div>`;
-                            }
-                            
-                            // Use real historical data if available
-                            if (totalGames >= 4) {
-                                const receivePct = (totalReceiveWins / totalGames * 100).toFixed(1);
-                                const servePct = (totalServeWins / totalGames * 100).toFixed(1);
-                                return `
-                                    ${matchSummaryHtml}
-                                    <div style="font-size: 0.9em; margin-bottom: 8px; opacity: 0.9;">
-                                        Your historical data (${totalGames} sets tracked):
-                                    </div>
-                                    <div class="stat-row" style="background: rgba(152,30,50,0.2);">
-                                        <span>Receiving team wins:</span>
-                                        <span><strong>${receivePct}%</strong> (${totalReceiveWins}/${totalGames})</span>
-                                    </div>
-                                    <div class="stat-row">
-                                        <span>Serving team wins:</span>
-                                        <span><strong>${servePct}%</strong> (${totalServeWins}/${totalGames})</span>
-                                    </div>
-                                `;
-                            } else if (totalGames > 0) {
-                                const receivePct = (totalReceiveWins / totalGames * 100).toFixed(1);
-                                return `
-                                    ${matchSummaryHtml}
-                                    <div style="font-size: 0.9em; margin-bottom: 8px;">
-                                        Early data (${totalGames} sets — more needed for reliable averages):
-                                    </div>
-                                    <div class="stat-row" style="background: rgba(152,30,50,0.2);">
-                                        <span>Receiving team wins:</span>
-                                        <span><strong>${receivePct}%</strong></span>
-                                    </div>
-                                    <div style="font-size: 0.8em; opacity: 0.7; margin-top: 8px; font-style: italic;">
-                                        
-                                    </div>
-                                `;
-                            } else {
-                                return `
-                                    ${matchSummaryHtml}
-                                    <div style="font-size: 0.9em; margin-bottom: 8px; opacity: 0.9;">
-                                        No personal data yet — track more sets to build your receive advantage history.
-                                    </div>
-                                `;
-                            }
-                        })()}
-                    </div>
-                    
-                    <div style="background: rgba(152,30,50,0.4); padding: 20px; border-radius: 10px; margin-top: 20px; border: 2px solid rgba(255,255,255,0.3);">
-                        <div style="font-weight: bold; font-size: 1.2em; margin-bottom: 15px; text-align: center;">🧭 DECISION GUIDE</div>
-                        
-                        <div style="background: rgba(255,255,255,0.1); padding: 12px; border-radius: 8px; margin-bottom: 12px;">
-                            <div style="font-weight: bold; margin-bottom: 8px;">If YOU win the coin toss:</div>
-                            <div style="font-size: 0.95em; padding-left: 15px;">
-                                ${beaufortLevel >= 3 && !windAnalysis.crosswind ? 
-                                    `Choose: <strong>${windAnalysis.tailwindSide.toUpperCase()} SIDE</strong><br><span style="opacity: 0.8;">(Wind advantage is significant - prioritize tailwind side)</span>` 
-                                    : beaufortLevel >= 4 && windAnalysis.crosswind ?
-                                    `Choose: <strong>RECEIVE FIRST</strong><br><span style="opacity: 0.8;">(Crosswind at ${weatherData.windSpeed} mph — no tailwind side, but wind still affects play. Take the receive advantage.)</span>`
-                                    :
-                                    `Choose: <strong>RECEIVE FIRST</strong><br><span style="opacity: 0.8;">(Light crosswind — take the receiving advantage)</span>`
-                                }
-                            </div>
-                        </div>
-                        
-                        <div style="background: rgba(255,255,255,0.1); padding: 12px; border-radius: 8px; margin-bottom: 12px;">
-                            <div style="font-weight: bold; margin-bottom: 8px;">If opponent chooses to SERVE first:</div>
-                            <div style="font-size: 0.95em; padding-left: 15px;">
-                                ${beaufortLevel >= 3 && !windAnalysis.crosswind ? 
-                                    `Choose: <strong>${windAnalysis.tailwindSide.toUpperCase()} SIDE</strong><br><span style="opacity: 0.8;">(You're receiving anyway - get the wind advantage)</span>` 
-                                    : beaufortLevel >= 4 && windAnalysis.crosswind ?
-                                    `Choose: <strong>Either side</strong><br><span style="opacity: 0.8;">(You have receive advantage. With ${weatherData.windSpeed} mph crosswind, choose by sun angle or court familiarity)</span>`
-                                    :
-                                    `Choose: <strong>Either side</strong><br><span style="opacity: 0.8;">(You have receive advantage — wind is not a factor)</span>`
-                                }
-                            </div>
-                        </div>
-                        
-                        ${(() => {
-                            const sides = orientation.split('-');
-                            const side1 = sides[0];
-                            const side2 = sides[1];
-                            const preferSide1 = beaufortLevel >= 3 && !windAnalysis.crosswind && windAnalysis.tailwindSide === side1;
-                            const preferSide2 = beaufortLevel >= 3 && !windAnalysis.crosswind && windAnalysis.tailwindSide === side2;
-                            
-                            return `
-                        <div style="background: rgba(255,255,255,0.1); padding: 12px; border-radius: 8px; margin-bottom: 12px;">
-                            <div style="font-weight: bold; margin-bottom: 8px;">If opponent chooses ${side1.toUpperCase()} side:</div>
-                            <div style="font-size: 0.95em; padding-left: 15px;">
-                                Choose: <strong>RECEIVE FIRST</strong><br>
-                                <span style="opacity: 0.8;">${preferSide2 ? '(You\'ll get the better side in Set 2)' : '(Take the receiving advantage)'}</span>
-                            </div>
-                        </div>
-                        
-                        <div style="background: rgba(255,255,255,0.1); padding: 12px; border-radius: 8px;">
-                            <div style="font-weight: bold; margin-bottom: 8px;">If opponent chooses ${side2.toUpperCase()} side:</div>
-                            <div style="font-size: 0.95em; padding-left: 15px;">
-                                Choose: <strong>RECEIVE FIRST</strong><br>
-                                <span style="opacity: 0.8;">${preferSide1 ? '(You\'ll get the better side in Set 2)' : '(Take the receiving advantage)'}</span>
-                            </div>
-                        </div>
-                            `;
-                        })()}
-                    </div>
-                </div>
-            `;
-            
-            content.innerHTML = html;
+            updateCoinTossDisplay(document.getElementById('setupCoinTossContent'));
         }
-        
+
         let currentDataScope = 'thisSet';
         let currentSetType = '21'; // '21' or '15'
         
@@ -7744,8 +7515,8 @@
             return html;
         }
 
-        function updateCoinTossDisplay() {
-            const content = document.getElementById('coinTossContent');
+        function updateCoinTossDisplay(targetEl) {
+            const content = targetEl || document.getElementById('coinTossContent');
             
             // Calculate optimal strategies
             const strategies = calculateCoinTossStrategies();
@@ -7845,7 +7616,7 @@
                 if (youTurns > 0 || partnerTurns > 0) {
                     const youRate     = youTurns     > 0 ? (ss.you?.ps     || 0) / youTurns     : 0;
                     const partnerRate = partnerTurns > 0 ? (ss.partner?.ps || 0) / partnerTurns : 0;
-                    topServerName = youRate >= partnerRate ? (matchSetup.playerName || '') : (matchSetup.partnerName || '');
+                    topServerName = youRate >= partnerRate ? (matchSetup.yourName || '') : (matchSetup.partnerName || '');
                 }
             }
 
