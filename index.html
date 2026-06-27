@@ -1605,7 +1605,7 @@
                     <div style="margin-top: 15px; padding: 15px; background: rgba(255,255,255,0.05); border-radius: 8px;">
                         <div style="font-weight: bold; margin-bottom: 8px; font-size: 1.1em;">${beaufortInfo.icon} SWINGLE SCALE</div>
                         <div style="font-size: 1em; margin-bottom: 5px;"><strong>Level ${beaufortLevel}: ${beaufortInfo.label}</strong></div>
-                        <div style="padding: 8px 12px; background: ${beaufortInfo.color}; border-radius: 6px; margin-top: 8px; font-weight: bold;">
+                        <div style="padding: 8px 12px; background: ${beaufortInfo.color}; border-radius: 6px; margin-top: 8px; font-weight: bold; color: #1a1a1a;">
                             ${beaufortInfo.playability}
                         </div>
                     </div>
@@ -1614,28 +1614,19 @@
                     <h3>🏐 BALL BEHAVIOR — Swingle Scale ${beaufortLevel}</h3>
                     <div style="margin-bottom: 15px;">
                         <div style="font-weight: bold; margin-bottom: 6px; color: ${beaufortInfo.color};">SERVING:</div>
-                        <div style="font-size: 0.9em; margin-bottom: 5px;">${beaufortInfo.effects.serving.description}</div>
-                        <ul style="margin: 0; padding-left: 18px; font-size: 0.85em;">
-                            ${beaufortInfo.effects.serving.tips.map(t => `<li style="margin: 3px 0;">${renderTip(t)}</li>`).join('')}
-                        </ul>
+                        <div style="font-size: 0.9em;">${beaufortInfo.effects.serving.description}</div>
                     </div>
                     <div style="margin-bottom: 15px;">
                         <div style="font-weight: bold; margin-bottom: 6px; color: ${beaufortInfo.color};">PASSING:</div>
-                        <div style="font-size: 0.9em; margin-bottom: 5px;">${beaufortInfo.effects.passing.description}</div>
-                        <ul style="margin: 0; padding-left: 18px; font-size: 0.85em;">
-                            ${beaufortInfo.effects.passing.tips.map(t => `<li style="margin: 3px 0;">${renderTip(t)}</li>`).join('')}
-                        </ul>
+                        <div style="font-size: 0.9em;">${beaufortInfo.effects.passing.description}</div>
                     </div>
                     <div>
                         <div style="font-weight: bold; margin-bottom: 6px; color: ${beaufortInfo.color};">SETTING:</div>
-                        <div style="font-size: 0.9em; margin-bottom: 5px;">${beaufortInfo.effects.setting.description}</div>
-                        <ul style="margin: 0; padding-left: 18px; font-size: 0.85em;">
-                            ${beaufortInfo.effects.setting.tips.map(t => `<li style="margin: 3px 0;">${renderTip(t)}</li>`).join('')}
-                        </ul>
+                        <div style="font-size: 0.9em;">${beaufortInfo.effects.setting.description}</div>
                     </div>
                 </div>
             `;
-            
+
             document.getElementById('quickWeatherContent').innerHTML = html;
         }
         
@@ -2555,7 +2546,7 @@
             const orientation = document.getElementById('coinTossTabOrientation')?.value || 'North-South';
             const resultDiv = document.getElementById('coinTossTabResult');
             if (!venueId || !venues[venueId]) {
-                if (resultDiv) resultDiv.innerHTML = '<p style="color:#f44336;font-size:0.9em;">Please select a venue first.</p>';
+                if (resultDiv) resultDiv.innerHTML = '<p style="color:rgba(220,80,80,0.9);font-size:0.9em;">Please select a venue first.</p>';
                 return;
             }
             if (resultDiv) resultDiv.innerHTML = '<p style="opacity:0.7;font-size:0.9em;">Fetching weather...</p>';
@@ -2566,25 +2557,31 @@
                 matchSetup.weather = weatherData;
                 matchSetup.orientation = orientation;
                 matchSetup.venueName = venue.name;
-                updateCoinTossDisplay();
+                // Re-render into whichever container holds this form (setup tab or live match tab)
+                const _container = resultDiv?.closest('#setupCoinTossContent') || null;
+                updateCoinTossDisplay(_container);
             } catch(e) {
-                if (resultDiv) resultDiv.innerHTML = '<p style="color:#f44336;font-size:0.9em;">Error fetching weather. Check connection.</p>';
+                if (resultDiv) resultDiv.innerHTML = '<p style="color:rgba(220,80,80,0.9);font-size:0.9em;">Weather fetch failed — check connection and try again.</p>';
             }
         }
 
         async function fetchWeather(venue, overrideOrientation = null) {
             const apiKey = '375cb5070a5df8c1cec42204967cfb23';
             const { lat, lon } = venue.location;
-            
+            const controller = new AbortController();
+            const _fetchTimeout = setTimeout(() => controller.abort(), 8000);
+
             try {
                 const response = await fetch(
-                    `https://api.openweathermap.org/data/2.5/weather?lat=${lat}&lon=${lon}&appid=${apiKey}&units=imperial`
+                    `https://api.openweathermap.org/data/2.5/weather?lat=${lat}&lon=${lon}&appid=${apiKey}&units=imperial`,
+                    { signal: controller.signal }
                 );
-                
+                clearTimeout(_fetchTimeout);
+
                 if (!response.ok) {
-                    throw new Error('Weather service unavailable');
+                    throw new Error(`Weather API error ${response.status}`);
                 }
-                
+
                 const data = await response.json();
                 
                 const temp = Math.round(data.main.temp);
@@ -2633,11 +2630,12 @@
                 return matchSetup.weather;
                 
             } catch (error) {
-                console.error('Weather fetch error:', error);
+                clearTimeout(_fetchTimeout);
+                console.error('Weather fetch error:', error.name === 'AbortError' ? 'Timed out after 8s' : error);
                 return null;
             }
         }
-        
+
         function getWindDirection(degrees) {
             const directions = ['N', 'NNE', 'NE', 'ENE', 'E', 'ESE', 'SE', 'SSE', 'S', 'SSW', 'SW', 'WSW', 'W', 'WNW', 'NW', 'NNW'];
             const index = Math.round(degrees / 22.5) % 16;
@@ -6289,7 +6287,7 @@
                     <div style="margin-top: 15px; padding: 15px; background: rgba(255,255,255,0.05); border-radius: 8px;">
                         <div style="font-weight: bold; margin-bottom: 8px; font-size: 1.1em;">${beaufortInfo.icon} SWINGLE SCALE</div>
                         <div style="font-size: 1em; margin-bottom: 5px;"><strong>Level ${beaufortLevel}: ${beaufortInfo.label}</strong></div>
-                        <div style="padding: 8px 12px; background: ${beaufortInfo.color}; border-radius: 6px; margin-top: 8px; font-weight: bold;">
+                        <div style="padding: 8px 12px; background: ${beaufortInfo.color}; border-radius: 6px; margin-top: 8px; font-weight: bold; color: #1a1a1a;">
                             ${beaufortInfo.playability}
                         </div>
                     </div>
@@ -6307,38 +6305,29 @@
                     
                     <div style="margin-bottom: 20px;">
                         <div style="font-weight: bold; margin-bottom: 8px; color: ${beaufortInfo.color};">SERVING:</div>
-                        <div style="font-size: 0.95em; margin-bottom: 8px;">${beaufortInfo.effects.serving.description}</div>
-                        <ul style="margin: 0; padding-left: 20px; font-size: 0.9em;">
-                            ${beaufortInfo.effects.serving.tips.map(tip => `<li style="margin: 4px 0;">${renderTip(tip)}</li>`).join('')}
-                        </ul>
+                        <div style="font-size: 0.95em;">${beaufortInfo.effects.serving.description}</div>
                     </div>
-                    
+
                     <div style="margin-bottom: 20px;">
                         <div style="font-weight: bold; margin-bottom: 8px; color: ${beaufortInfo.color};">PASSING:</div>
-                        <div style="font-size: 0.95em; margin-bottom: 8px;">${beaufortInfo.effects.passing.description}</div>
-                        <ul style="margin: 0; padding-left: 20px; font-size: 0.9em;">
-                            ${beaufortInfo.effects.passing.tips.map(tip => `<li style="margin: 4px 0;">${renderTip(tip)}</li>`).join('')}
-                        </ul>
+                        <div style="font-size: 0.95em;">${beaufortInfo.effects.passing.description}</div>
                     </div>
-                    
+
                     <div style="margin-bottom: 20px;">
                         <div style="font-weight: bold; margin-bottom: 8px; color: ${beaufortInfo.color};">SETTING:</div>
-                        <div style="font-size: 0.95em; margin-bottom: 8px;">${beaufortInfo.effects.setting.description}</div>
-                        <ul style="margin: 0; padding-left: 20px; font-size: 0.9em;">
-                            ${beaufortInfo.effects.setting.tips.map(tip => `<li style="margin: 4px 0;">${renderTip(tip)}</li>`).join('')}
-                        </ul>
+                        <div style="font-size: 0.95em;">${beaufortInfo.effects.setting.description}</div>
                     </div>
-                    
+
                     <div style="padding: 12px; background: ${beaufortInfo.color}33; border-radius: 8px; text-align: center;">
                         <div style="font-weight: bold; font-size: 1.1em;">⚠️ PLAYABILITY</div>
                         <div style="margin-top: 5px;">${beaufortInfo.playability}</div>
                     </div>
                 </div>
             `;
-            
+
             content.innerHTML = html;
         }
-        
+
         function updateSetupCoinTossDisplay() {
             updateCoinTossDisplay(document.getElementById('setupCoinTossContent'));
         }
@@ -8212,7 +8201,7 @@
                     <div style="margin-top: 15px; padding: 15px; background: rgba(255,255,255,0.05); border-radius: 8px;">
                         <div style="font-weight: bold; margin-bottom: 8px; font-size: 1.1em;">${beaufortInfo.icon} SWINGLE SCALE</div>
                         <div style="font-size: 1em; margin-bottom: 5px;"><strong>Level ${beaufortLevel}: ${beaufortInfo.label}</strong></div>
-                        <div style="padding: 8px 12px; background: ${beaufortInfo.color}; border-radius: 6px; margin-top: 8px; font-weight: bold;">
+                        <div style="padding: 8px 12px; background: ${beaufortInfo.color}; border-radius: 6px; margin-top: 8px; font-weight: bold; color: #1a1a1a;">
                             ${beaufortInfo.playability}
                         </div>
                     </div>
@@ -8230,31 +8219,22 @@
                     
                     <div style="margin-bottom: 20px;">
                         <div style="font-weight: bold; margin-bottom: 8px; color: ${beaufortInfo.color};">SERVING:</div>
-                        <div style="font-size: 0.95em; margin-bottom: 8px;">${beaufortInfo.effects.serving.description}</div>
-                        <ul style="margin: 0; padding-left: 20px; font-size: 0.9em;">
-                            ${beaufortInfo.effects.serving.tips.map(tip => `<li style="margin: 4px 0;">${renderTip(tip)}</li>`).join('')}
-                        </ul>
+                        <div style="font-size: 0.95em;">${beaufortInfo.effects.serving.description}</div>
                         ${beaufortInfo.effects.serving.headwindReduction > 0 ? `
                         <div style="margin-top: 8px; padding: 8px; background: rgba(255,255,255,0.05); border-radius: 5px; font-size: 0.85em;">
                             <strong>Physics:</strong> Into headwind: ${fmtDistSigned(-beaufortInfo.effects.serving.headwindReduction)} | With tailwind: ${fmtDistSigned(beaufortInfo.effects.serving.tailwindIncrease)}
                         </div>
                         ` : ''}
                     </div>
-                    
+
                     <div style="margin-bottom: 20px;">
                         <div style="font-weight: bold; margin-bottom: 8px; color: ${beaufortInfo.color};">PASSING:</div>
-                        <div style="font-size: 0.95em; margin-bottom: 8px;">${beaufortInfo.effects.passing.description}</div>
-                        <ul style="margin: 0; padding-left: 20px; font-size: 0.9em;">
-                            ${beaufortInfo.effects.passing.tips.map(tip => `<li style="margin: 4px 0;">${renderTip(tip)}</li>`).join('')}
-                        </ul>
+                        <div style="font-size: 0.95em;">${beaufortInfo.effects.passing.description}</div>
                     </div>
-                    
+
                     <div style="margin-bottom: 20px;">
                         <div style="font-weight: bold; margin-bottom: 8px; color: ${beaufortInfo.color};">SETTING:</div>
-                        <div style="font-size: 0.95em; margin-bottom: 8px;">${beaufortInfo.effects.setting.description}</div>
-                        <ul style="margin: 0; padding-left: 20px; font-size: 0.9em;">
-                            ${beaufortInfo.effects.setting.tips.map(tip => `<li style="margin: 4px 0;">${renderTip(tip)}</li>`).join('')}
-                        </ul>
+                        <div style="font-size: 0.95em;">${beaufortInfo.effects.setting.description}</div>
                     </div>
                     
                     <div style="padding: 12px; background: ${beaufortInfo.color}33; border-radius: 8px; text-align: center;">
