@@ -1091,6 +1091,13 @@
                 <button class="btn btn-small" onclick="setDataScope('allTime')" id="dataScopeAll">All Time</button>
             </div>
 
+            <!-- Venue Filter (All Time only) -->
+            <div id="venueFilterRow" style="display:none; margin-bottom:10px;">
+                <select id="dashboardVenueFilter" onchange="onVenueFilterChange()" style="width:100%;padding:8px 10px;border-radius:6px;background:rgba(255,255,255,0.10);color:white;border:1px solid rgba(255,255,255,0.25);font-size:0.9em;cursor:pointer;">
+                    <option value="all">All Venues</option>
+                </select>
+            </div>
+
             <!-- Set Type Toggle -->
             <div style="display: flex; gap: 5px; margin-bottom: 16px; justify-content: center;">
                 <button id="setType21Btn" onclick="setDataSetType('21')"
@@ -6334,7 +6341,13 @@
 
         let currentDataScope = 'thisSet';
         let currentSetType = '21'; // '21' or '15'
-        
+        let currentVenueFilter = 'all'; // 'all' or a venueId string
+
+        function onVenueFilterChange() {
+            currentVenueFilter = document.getElementById('dashboardVenueFilter')?.value || 'all';
+            updateDataTab();
+        }
+
         function setDataScope(scope) {
             currentDataScope = scope;
             ['dataScopeSet','dataScopeMatch','dataScopeToday','dataScopeAll'].forEach(id => {
@@ -6565,7 +6578,44 @@
                     window._todayRPBuckets = { b21: { count:0, ourRPs:0, oppRPs:0, winRPs:0, winCount:0, loseRPs:0, loseCount:0 }, b15: { count:0, ourRPs:0, oppRPs:0, winRPs:0, winCount:0, loseRPs:0, loseCount:0 } };
                 }
             }
-            
+
+            // Show/hide venue filter row — only meaningful for All Time
+            const _venueFilterRow = document.getElementById('venueFilterRow');
+            if (_venueFilterRow) _venueFilterRow.style.display = currentDataScope === 'allTime' ? 'block' : 'none';
+            if (currentDataScope !== 'allTime') currentVenueFilter = 'all';
+
+            // Pre-compute venue-filtered RP buckets (All Time + specific venue)
+            if (currentDataScope === 'allTime' && currentVenueFilter !== 'all' && currentUser) {
+                try {
+                    const _vsnap = await db.collection('sets').where('userId', '==', currentUser.uid).limit(500).get();
+                    const vb21 = { count:0, ourRPs:0, oppRPs:0, winRPs:0, winCount:0, loseRPs:0, loseCount:0 };
+                    const vb15 = { count:0, ourRPs:0, oppRPs:0, winRPs:0, winCount:0, loseRPs:0, loseCount:0 };
+                    let _venueName = currentVenueFilter;
+                    _vsnap.docs.forEach(doc => {
+                        const d = doc.data();
+                        if (!d.complete || d.venueId !== currentVenueFilter) return;
+                        const _vTier = matchSetup.competitionTier;
+                        if (_vTier && d.competitionTier !== _vTier) return;
+                        const margin = Math.abs((d.ourScore||0) - (d.theirScore||0));
+                        const maxPts = d.gameType === 'deciding' ? 15 : 21;
+                        if (competitive && margin >= (maxPts === 21 ? 6 : 5)) return;
+                        if (d.venue) _venueName = d.venue;
+                        const vb = d.gameType === 'deciding' ? vb15 : vb21;
+                        const weWon = (d.ourScore||0) > (d.theirScore||0);
+                        const ourRPs = d.ourRealPoints||0, theirRPs = d.theirRealPoints||0;
+                        vb.count++; vb.ourRPs += ourRPs; vb.oppRPs += theirRPs;
+                        if (weWon) { vb.winRPs += ourRPs; vb.winCount++; vb.loseRPs += theirRPs; vb.loseCount++; }
+                        else       { vb.winRPs += theirRPs; vb.winCount++; vb.loseRPs += ourRPs; vb.loseCount++; }
+                    });
+                    window._venueRPBuckets = { b21: vb21, b15: vb15, venueName: _venueName };
+                } catch(e) {
+                    console.error('[VENUE RP]', e);
+                    window._venueRPBuckets = null;
+                }
+            } else {
+                window._venueRPBuckets = null;
+            }
+
             const inMatch = matchState && matchState.servers && 
                             (matchState.ourScore > 0 || matchState.theirScore > 0 || matchScore.setsCompleted.length > 0);
             
@@ -6781,6 +6831,9 @@
                     const diff = Math.abs(s1pts - s2pts);
                     lines.push({ icon: '📐', label: 'Better side this match', value: `${better} (+${diff} pts)`, highlight: false });
                 }
+            } else if (currentDataScope === 'allTime' && currentVenueFilter === 'all') {
+                // Compass data mixed across venues — aggregate is meaningless
+                lines.push({ icon: '📐', label: 'Better side all-time', value: 'Select specific venue ↑', highlight: false });
             } else if (stats?.sidePoints) {
                 const sp = stats.sidePoints;
                 const pairs = [['north','south'],['east','west'],['northeast','southwest'],['northwest','southeast']];
@@ -6939,6 +6992,11 @@
             }
 
             // ── ALL TIME ──
+            // Venue-filtered: use pre-computed venue RP buckets from updateDataTab()
+            if (currentVenueFilter !== 'all' && window._venueRPBuckets) {
+                const vn = window._venueRPBuckets.venueName || currentVenueFilter;
+                return tableFromSets(window._venueRPBuckets.b21, window._venueRPBuckets.b15, vn);
+            }
             if (!stats) return `<div class="stat-box"><h3>📊 RP AVERAGES — ALL TIME</h3><div style="opacity:0.6;padding:10px;font-size:0.9em;">Complete sets to build your RP history.</div></div>`;
             const s21 = stats.sets21, s15 = stats.sets15;
             const at21 = { count:s21.ourTeam.count, ourRPs:s21.ourTeam.totalRPs, oppRPs:s21.opponents.totalRPs, winRPs:s21.winners.totalRPs, winCount:s21.winners.count, loseRPs:s21.losers.totalRPs, loseCount:s21.losers.count };
@@ -7087,13 +7145,44 @@
                     });
                 }
                 
-                if (Object.keys(venueData).length === 0) {
-                    return `<div class="stat-box" style="border-left-color:rgba(255,255,255,0.5);"><h3>🌍 SIDE ADVANTAGE</h3><div style="opacity:0.6;padding:10px;font-size:0.9em;">No completed sets with segment data yet.</div></div>`;
+                // Populate venue filter dropdown with all unique venues found
+                const _dropdown = document.getElementById('dashboardVenueFilter');
+                if (_dropdown && currentDataScope === 'allTime') {
+                    const _prevVal = currentVenueFilter;
+                    _dropdown.innerHTML = '<option value="all">All Venues</option>';
+                    Object.entries(venueData).forEach(([vid, vd]) => {
+                        const opt = document.createElement('option');
+                        opt.value = vid;
+                        opt.textContent = vd.name;
+                        _dropdown.appendChild(opt);
+                    });
+                    if (_prevVal !== 'all' && venueData[_prevVal]) _dropdown.value = _prevVal;
                 }
+
+                // Apply venue filter (All Time scope only)
+                const _filteredVenueData = (currentVenueFilter !== 'all' && currentDataScope === 'allTime')
+                    ? Object.fromEntries(Object.entries(venueData).filter(([vid]) => vid === currentVenueFilter))
+                    : venueData;
+
+                if (Object.keys(_filteredVenueData).length === 0) {
+                    const _msg = currentVenueFilter !== 'all' ? 'No sets with segment data for this venue yet.' : 'No completed sets with segment data yet.';
+                    return `<div class="stat-box" style="border-left-color:rgba(255,255,255,0.5);"><h3>🌍 SIDE ADVANTAGE</h3><div style="opacity:0.6;padding:10px;font-size:0.9em;">${_msg}</div></div>`;
+                }
+
+                // Multi-venue warning: compass directions are location-specific
+                const _venueCount = Object.keys(venueData).length;
+                const _mixingWarning = (currentVenueFilter === 'all' && currentDataScope === 'allTime' && _venueCount > 1)
+                    ? `<div style="padding:10px 12px;margin-bottom:12px;background:rgba(152,30,50,0.25);border-left:3px solid rgba(255,255,255,0.4);border-radius:5px;font-size:0.88em;line-height:1.5;">
+                           Compass data from <strong>${_venueCount} venues</strong> shown separately below. Aggregating North/South/East/West across different facilities is invalid — select a specific venue above for isolated side analysis.
+                       </div>`
+                    : '';
+
+                const _headingLabel = currentVenueFilter !== 'all'
+                    ? `SIDE ADVANTAGE — ${(_filteredVenueData[currentVenueFilter]?.name || '').toUpperCase()}`
+                    : 'SIDE ADVANTAGE BY VENUE';
+                let html = `<div class="stat-box" style="border-left-color:rgba(255,255,255,0.5);"><h3>🌍 ${_headingLabel}</h3>${_mixingWarning}`;
                 
-                let html = `<div class="stat-box" style="border-left-color:rgba(255,255,255,0.5);"><h3>🌍 SIDE ADVANTAGE BY VENUE</h3>`;
-                
-                Object.entries(venueData).forEach(([venueId, vd]) => {
+                Object.entries(_filteredVenueData).forEach(([venueId, vd]) => {
                     const sets = vd.sets;
                     const n = sets.length;
                     
@@ -8679,11 +8768,15 @@
             const rpsToWinCT  = rpsResultCT?.value ?? null;
             const receiveFirstAdvantage = rpsToWinCT ? (rpsToWinCT - 1) / rpsToWinCT : null;
 
-            // CHOOSE SIDE when extras advantage exceeds the receive threshold and
-            // there IS a tail to exploit (remainder === 0 → perfectly equal exposure → always receive).
-            const recommendSide = receiveFirstAdvantage !== null
-                && remainder > 0
-                && extrasAdvantage > receiveFirstAdvantage;
+            // CHOOSE SIDE when observed net side advantage in points exceeds receive advantage
+            // in points AND Swingle Scale >= 4 (13+ mph). Both conditions required per GASA
+            // framework. At Swingle < 4 receive first is always correct regardless of P7 data.
+            const currentSwingle = matchState.weatherAtSetStart?.swingleScale
+                ?? matchSetup.weather?.beaufortForce
+                ?? 0;
+            const recommendSide = receiveAdv !== null
+                && sideAdvantagePoints > receiveAdvantagePoints
+                && currentSwingle >= 4;
 
             // Starred server: top PS% player on our team — named in tactical note when side is chosen.
             const _ss = matchState.servers || {};
