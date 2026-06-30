@@ -6810,16 +6810,43 @@
         // ── LEADING RECOMMENDATION ───────────────────────────────────────────
         function buildLeadingRecommendation(stats, displayState, displaySetup, inMatch) {
             const lines = [];
+            const coinTossCalc = calculateCoinTossStrategies();
+            const gasaPct = (!coinTossCalc.noData && coinTossCalc.projectedTotal > 0)
+                ? (coinTossCalc.sideAdvantagePoints / coinTossCalc.projectedTotal * 100).toFixed(1)
+                : null;
 
             // 1. Receive-first recommendation — use GASA6 RP math, not W/L%
             const stKey = currentSetType === '15' ? 'sets15' : 'sets21';
             const st = stats?.[stKey];
             const recAdv = calculateReceiveAdvantage();
+            let coinTossBlock;
             if (recAdv) {
-                const recText = `Receive first — need ${recAdv.receivePct.toFixed(1)}% of RPs vs ${recAdv.servePct.toFixed(1)}% serving (+${recAdv.advantagePct.toFixed(1)}% edge)`;
-                lines.push({ icon: '🏐', label: 'Coin toss', value: recText, highlight: true });
+                coinTossBlock = `
+                    <div style="background:rgba(255,255,255,0.10);border-radius:6px;margin-bottom:4px;padding:8px 10px;">
+                        <div style="font-weight:bold;margin-bottom:6px;">🏐 Coin Toss</div>
+                        <div style="display:flex;justify-content:space-between;padding:2px 0;font-size:0.9em;">
+                            <span style="opacity:0.7;">Real Points to Win</span>
+                            <span style="font-weight:bold;">${recAdv.rpsToWin}</span>
+                        </div>
+                        <div style="display:flex;justify-content:space-between;padding:2px 0;font-size:0.9em;">
+                            <span style="opacity:0.7;">Receive first: Win at ${recAdv.receiveScenario}</span>
+                            <span style="font-weight:bold;">need ${recAdv.receivePct.toFixed(1)}% of RPs</span>
+                        </div>
+                        <div style="display:flex;justify-content:space-between;padding:2px 0;font-size:0.9em;">
+                            <span style="opacity:0.7;">Serve first: Win at ${recAdv.serveScenario}</span>
+                            <span style="font-weight:bold;">need ${recAdv.servePct.toFixed(1)}% of RPs</span>
+                        </div>
+                        <div style="display:flex;justify-content:space-between;padding:2px 0;font-size:0.9em;border-top:1px solid rgba(255,255,255,0.10);margin-top:4px;padding-top:4px;">
+                            <span style="opacity:0.7;">Receive-first advantage</span>
+                            <span style="font-weight:bold;">+${recAdv.advantagePct.toFixed(1)} pp easier</span>
+                        </div>
+                    </div>`;
             } else {
-                lines.push({ icon: '🏐', label: 'Coin toss', value: 'Receive first — complete a set for RP calculation', highlight: true });
+                coinTossBlock = `
+                    <div style="background:rgba(255,255,255,0.10);border-radius:6px;margin-bottom:4px;padding:8px 10px;display:flex;justify-content:space-between;align-items:center;">
+                        <span style="opacity:0.8;">🏐 Coin toss</span>
+                        <span style="font-weight:bold;">Receive first — complete a set for RP calc</span>
+                    </div>`;
             }
 
             // 2. Better side this match / all-time
@@ -6829,7 +6856,9 @@
                 if (s1pts + s2pts > 0) {
                     const better = s1pts >= s2pts ? s1 : s2;
                     const diff = Math.abs(s1pts - s2pts);
-                    lines.push({ icon: '📐', label: 'Better side this match', value: `${better} (+${diff} pts)`, highlight: false });
+                    const total = s1pts + s2pts;
+                    const pct = (diff / total * 100).toFixed(1);
+                    lines.push({ icon: '📐', label: 'Better side this match', value: `${better} (+${pct}% raw)`, subtext: gasaPct !== null ? `Real SoS Advantage: +${gasaPct}% (scaled to avg tail rallies)` : null, highlight: false });
                 }
             } else if (currentDataScope === 'allTime' && currentVenueFilter === 'all') {
                 // Compass data mixed across venues — aggregate is meaningless
@@ -6842,7 +6871,9 @@
                     if (aV + bV > 0) {
                         const better = aV >= bV ? a : b;
                         const diff = Math.abs(aV - bV);
-                        lines.push({ icon: '📐', label: 'Better side all-time', value: `${better.charAt(0).toUpperCase()+better.slice(1)} (+${diff} pts)`, highlight: false });
+                        const total = aV + bV;
+                        const pct = (diff / total * 100).toFixed(1);
+                        lines.push({ icon: '📐', label: 'Better side all-time', value: `${better.charAt(0).toUpperCase()+better.slice(1)} (+${pct}% raw)`, subtext: gasaPct !== null ? `Real SoS Advantage: +${gasaPct}% (scaled to avg tail rallies)` : null, highlight: false });
                         break;
                     }
                 }
@@ -6860,16 +6891,18 @@
                 }
             }
 
-            if (lines.length === 0) return '';
-
             const rows = lines.map(l => `
-                <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 10px;border-radius:6px;margin-bottom:4px;background:${l.highlight ? 'rgba(255,255,255,0.10)' : 'rgba(255,255,255,0.04)'};">
+                <div style="display:flex;justify-content:space-between;align-items:${l.subtext ? 'flex-start' : 'center'};padding:8px 10px;border-radius:6px;margin-bottom:4px;background:${l.highlight ? 'rgba(255,255,255,0.10)' : 'rgba(255,255,255,0.04)'};">
                     <span style="opacity:0.8;">${l.icon} ${l.label}</span>
-                    <span style="font-weight:bold;text-align:right;max-width:60%;">${l.value}</span>
+                    <div style="text-align:right;max-width:60%;">
+                        <span style="font-weight:bold;">${l.value}</span>
+                        ${l.subtext ? `<div style="font-size:0.82em;opacity:0.65;margin-top:2px;">${l.subtext}</div>` : ''}
+                    </div>
                 </div>`).join('');
 
             return `<div class="stat-box" style="border-left-color:rgba(255,255,255,0.5);margin-bottom:4px;">
                 <h3>⚡ WHAT THE DATA SAYS</h3>
+                ${coinTossBlock}
                 ${rows}
             </div>`;
         }
@@ -8811,6 +8844,7 @@
                 receiveAdvantagePoints: receiveAdvantagePoints,
                 receiveAdv: receiveAdv,
                 sideAdvantagePoints: sideAdvantagePoints,
+                projectedTotal: projectedTotal,
                 preferredSide: preferredSide,           // physically better side — lose-toss default
                 preferredStartSide: preferredStartSide, // starting position that exploits the tail
                 advStartingSide1: advStartingSide1,
