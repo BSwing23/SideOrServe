@@ -778,14 +778,49 @@
             </select>
         </div>
 
-        <!-- Admin-only: manual player name override (hidden for all other accounts) -->
-        <div id="adminPlayerOverrideSection" style="display:none;">
-            <h3>👤 Your Name (Override)</h3>
+        <!-- Admin-only blocks: hidden for all other accounts -->
+        <div id="adminOverrideBlocks" style="display:none;">
+
+            <h3>👤 Scorekeeper Name</h3>
             <div class="form-group">
-                <input type="text" id="adminPlayerName" placeholder="Override profile name" autocomplete="off"
-                    style="background:rgba(152,30,50,0.12);border:1px solid rgba(152,30,50,0.45);">
+                <input type="text" id="adminPlayerName" placeholder="Leave blank to use profile name" autocomplete="off"
+                    style="width:100%;padding:12px;border-radius:10px;border:none;font-size:1em;background:rgba(255,255,255,0.9);color:#333;">
             </div>
-        </div>
+
+            <h3>🌤️ Historical Environmental Parameters</h3>
+            <p style="font-size:0.85em;opacity:0.7;margin-bottom:12px;">Applied at match start — overrides live weather API</p>
+            <div class="form-group">
+                <label>Wind Speed (mph)</label>
+                <input type="number" id="adminWindSpeed" min="0" max="80" placeholder="e.g. 15"
+                    style="width:100%;padding:12px;border-radius:10px;border:none;font-size:1em;background:rgba(255,255,255,0.9);color:#333;margin-top:6px;">
+            </div>
+            <div class="form-group">
+                <label>Wind Direction</label>
+                <select id="adminWindDir"
+                    style="width:100%;padding:12px;border-radius:10px;border:none;font-size:1em;background:rgba(255,255,255,0.9);color:#333;margin-top:6px;">
+                    <option value="">-- Select direction --</option>
+                    <option value="0">N — North</option>
+                    <option value="45">NE — Northeast</option>
+                    <option value="90">E — East</option>
+                    <option value="135">SE — Southeast</option>
+                    <option value="180">S — South</option>
+                    <option value="225">SW — Southwest</option>
+                    <option value="270">W — West</option>
+                    <option value="315">NW — Northwest</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label>Ambient Temperature (°F)</label>
+                <input type="number" id="adminTemp" placeholder="e.g. 78"
+                    style="width:100%;padding:12px;border-radius:10px;border:none;font-size:1em;background:rgba(255,255,255,0.9);color:#333;margin-top:6px;">
+            </div>
+            <div class="form-group">
+                <label>Environmental Notes</label>
+                <textarea id="adminEnvNotes" rows="2" placeholder="e.g. Queen's Beach morning sun"
+                    style="width:100%;padding:12px;border-radius:10px;border:none;font-size:1em;background:rgba(255,255,255,0.9);color:#333;margin-top:6px;resize:vertical;"></textarea>
+            </div>
+
+        </div><!-- end adminOverrideBlocks -->
 
         <h3>🤝 Your Partner</h3>
         <div class="form-group">
@@ -1236,7 +1271,7 @@
 
         // Admin gate — manual overrides for the primary account only
         const ADMIN_EMAIL = 'brian.scott.swingle@gmail.com';
-        function isAdmin() { return !!(currentUser && currentUser.email === ADMIN_EMAIL); }
+        function isAdmin() { return !!(currentUser && currentUser.email?.toLowerCase() === ADMIN_EMAIL.toLowerCase()); }
 
         // Unit conversion helpers
         function useMetric() {
@@ -1982,8 +2017,8 @@
         function showMatchSetup() {
             hideAllScreens();
             document.getElementById('matchSetupScreen').classList.remove('hidden');
-            // Show admin-only manual override fields only for the primary account
-            const _adminSec = document.getElementById('adminPlayerOverrideSection');
+            // Show admin-only blocks only for the primary account
+            const _adminSec = document.getElementById('adminOverrideBlocks');
             if (_adminSec) _adminSec.style.display = isAdmin() ? '' : 'none';
             
             // Populate venue dropdown with built-in + custom venues
@@ -3047,11 +3082,35 @@
             needsYourTeamFirstServer = true;     // Will need to ask for your team
             needsTheirTeamFirstServer = true;    // Will need to ask for their team
             
-            matchSetup.yourName = yourName || userProfile?.name || 'You';
-            // Admin: manual name override takes priority over profile name
             if (isAdmin()) {
+                // Admin: scorekeeper name input is authoritative; blank = fall back to profile name
                 const _adminName = document.getElementById('adminPlayerName')?.value.trim();
-                if (_adminName) matchSetup.yourName = _adminName;
+                matchSetup.yourName = _adminName || userProfile?.name || 'You';
+
+                // Admin: read historical weather fields and wire straight to matchSetup.weather
+                const _spd = parseFloat(document.getElementById('adminWindSpeed')?.value);
+                const _dirVal = document.getElementById('adminWindDir')?.value;
+                const _deg = (_dirVal !== '' && _dirVal != null) ? parseFloat(_dirVal) : NaN;
+                const _tmp = parseFloat(document.getElementById('adminTemp')?.value);
+                const _notes = document.getElementById('adminEnvNotes')?.value.trim() || '';
+                if (!isNaN(_spd) && !isNaN(_deg)) {
+                    matchSetup.weather = {
+                        windSpeed: _spd,
+                        windDeg: _deg,
+                        windDegrees: _deg,
+                        beaufortForce: getBeaufortLevel(_spd),
+                        temp: !isNaN(_tmp) ? _tmp : null,
+                        condition: _notes || 'Manual override',
+                        description: _notes || 'Manual override',
+                        envNotes: _notes,
+                        isManualOverride: true,
+                        windComponents: matchSetup.orientation
+                            ? calculateWindComponents(_spd, _deg, matchSetup.orientation)
+                            : null
+                    };
+                }
+            } else {
+                matchSetup.yourName = yourName || userProfile?.name || 'You';
             }
             matchSetup.partnerName = partnerName;
             matchSetup.opponent1Name = opp1Name;
@@ -6273,14 +6332,12 @@
             const content = document.getElementById('setupWeatherContent');
             
             if (!matchSetup.weather || !matchSetup.weather.windSpeed) {
-                let _noWxHtml = `
+                content.innerHTML = `
                     <div class="stat-box" style="text-align: center; padding: 40px;">
                         <p style="font-size: 1.1em; opacity: 0.8;">Weather data not available</p>
                         <p style="font-size: 0.9em; margin-top: 10px;">Select a venue on the Setup tab to load weather</p>
                     </div>
                 `;
-                if (isAdmin()) _noWxHtml += adminWeatherOverrideHtml();
-                content.innerHTML = _noWxHtml;
                 return;
             }
             
@@ -6358,63 +6415,7 @@
                 </div>
             `;
 
-            if (isAdmin()) html += adminWeatherOverrideHtml();
             content.innerHTML = html;
-        }
-
-        function adminWeatherOverrideHtml() {
-            const cur = matchSetup.weather?.isManualOverride ? matchSetup.weather : null;
-            return `
-                <div class="stat-box" style="border-left-color:rgba(152,30,50,0.7);margin-top:16px;">
-                    <h3>🔧 MANUAL WEATHER OVERRIDE</h3>
-                    <div style="font-size:0.85em;opacity:0.65;margin-bottom:12px;">Admin only — enter historical or observed conditions</div>
-                    <div class="form-group" style="margin-bottom:10px;">
-                        <label style="font-size:0.9em;opacity:0.8;">Wind Speed (mph)</label>
-                        <input type="number" id="adminWindSpeed" min="0" max="80" placeholder="e.g. 18"
-                            value="${cur ? cur.windSpeed : ''}"
-                            style="width:100%;padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,0.2);background:rgba(255,255,255,0.08);color:#fff;font-size:1em;margin-top:4px;">
-                    </div>
-                    <div class="form-group" style="margin-bottom:10px;">
-                        <label style="font-size:0.9em;opacity:0.8;">Wind Direction (degrees, 0–359)</label>
-                        <input type="number" id="adminWindDeg" min="0" max="359" placeholder="e.g. 270 = West"
-                            value="${cur ? cur.windDeg : ''}"
-                            style="width:100%;padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,0.2);background:rgba(255,255,255,0.08);color:#fff;font-size:1em;margin-top:4px;">
-                    </div>
-                    <div class="form-group" style="margin-bottom:12px;">
-                        <label style="font-size:0.9em;opacity:0.8;">Environmental Notes</label>
-                        <textarea id="adminEnvNotes" rows="2" placeholder="e.g. Sea breeze, gusts to 25 mph..."
-                            style="width:100%;padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,0.2);background:rgba(255,255,255,0.08);color:#fff;font-size:0.95em;margin-top:4px;resize:vertical;">${cur ? (cur.envNotes || '') : ''}</textarea>
-                    </div>
-                    <button class="btn btn-secondary" onclick="applyAdminWeatherOverride()" style="width:100%;">Apply Override</button>
-                    ${cur ? '<div style="margin-top:8px;font-size:0.8em;color:rgba(255,255,255,0.5);text-align:center;">✓ Manual override active</div>' : ''}
-                </div>`;
-        }
-
-        function applyAdminWeatherOverride() {
-            if (!isAdmin()) return;
-            const speed = parseFloat(document.getElementById('adminWindSpeed')?.value);
-            const deg   = parseFloat(document.getElementById('adminWindDeg')?.value);
-            const notes = document.getElementById('adminEnvNotes')?.value.trim() || '';
-            if (isNaN(speed) || isNaN(deg)) {
-                alert('Please enter valid Wind Speed and Wind Direction values.');
-                return;
-            }
-            const beaufortLevel = getBeaufortLevel(speed);
-            matchSetup.weather = {
-                windSpeed: speed,
-                windDeg: deg,
-                windDegrees: deg,
-                beaufortForce: beaufortLevel,
-                temp: null,
-                condition: notes || 'Manual override',
-                description: notes || 'Manual override',
-                envNotes: notes,
-                isManualOverride: true,
-                windComponents: matchSetup.orientation
-                    ? calculateWindComponents(speed, deg, matchSetup.orientation)
-                    : null
-            };
-            updateSetupWeatherDisplay();
         }
 
         function updateSetupCoinTossDisplay() {
