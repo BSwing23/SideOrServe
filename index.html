@@ -781,9 +781,9 @@
         <!-- Admin-only blocks: hidden for all other accounts -->
         <div id="adminOverrideBlocks" style="display:none;">
 
-            <h3>👤 Scorekeeper Name</h3>
+            <h3>👤 Team 1 — Player 1</h3>
             <div class="form-group">
-                <input type="text" id="adminPlayerName" placeholder="Leave blank to use profile name" autocomplete="off"
+                <input type="text" id="adminPlayerName" placeholder="Player 1 full name" autocomplete="off"
                     style="width:100%;padding:12px;border-radius:10px;border:none;font-size:1em;background:rgba(255,255,255,0.9);color:#333;">
             </div>
 
@@ -3085,7 +3085,7 @@
             if (isAdmin()) {
                 // Admin: scorekeeper name input is authoritative; blank = fall back to profile name
                 const _adminName = document.getElementById('adminPlayerName')?.value.trim();
-                matchSetup.yourName = _adminName || userProfile?.name || 'You';
+                matchSetup.yourName = _adminName || '';
 
                 // Admin: read historical weather fields and wire straight to matchSetup.weather
                 const _spd = parseFloat(document.getElementById('adminWindSpeed')?.value);
@@ -5298,6 +5298,8 @@
                 // Sharing
                 isShared: !!selectedPairedPartner,
                 primaryOwner: currentUser.uid,
+                creatorId: currentUser.uid,
+                scorekeeperId: currentUser.uid,
                 owners: selectedPairedPartner
                     ? [currentUser.uid, selectedPairedPartner.partnerId]
                     : [currentUser.uid],
@@ -5350,7 +5352,7 @@
 
             const matchData = sanitize({
                 userId: currentUser.uid,
-                playerName: safe(userProfile.name),
+                playerName: safe(matchSetup.yourName || userProfile?.name),
                 partnerName: safe(matchSetup.partnerName),
                 opponent1Name: safe(matchSetup.opponent1Name),
                 opponent2Name: safe(matchSetup.opponent2Name),
@@ -5367,8 +5369,10 @@
                 currentSetNumber: matchScore.currentSetNumber,
                 isShared: !!selectedPairedPartner,
                 primaryOwner: currentUser.uid,
+                creatorId: currentUser.uid,
+                scorekeeperId: currentUser.uid,
                 team1: {
-                    player1: { name: safe(userProfile.name), userId: currentUser.uid },
+                    player1: { name: safe(matchSetup.yourName || userProfile?.name), userId: isAdmin() ? null : currentUser.uid },
                     player2: { name: safe(matchSetup.partnerName), userId: selectedPairedPartner ? selectedPairedPartner.partnerId : null }
                 },
                 team2: {
