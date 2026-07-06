@@ -7128,6 +7128,25 @@
         }
         
         // ── SECTION 4b: Historical Side Advantage (Today/All Time) ───────────
+        function calculateFirstSwitchWinPct(sets, setType) {
+            // setType: 'normal' (P7/21-pt sets) or 'deciding' (P5/15-pt sets)
+            // Returns null when no eligible sets exist.
+            let leaderWon = 0, total = 0;
+            sets.forEach(d => {
+                const effectiveType = d.gameType || 'normal';
+                if (effectiveType !== setType) return;
+                const segs = d.completedSegments || [];
+                if (!segs.length || segs[0].isPartial) return;
+                const { ourPoints, theirPoints } = segs[0];
+                if (ourPoints === theirPoints) return; // no leader at first switch — skip
+                const ourLed = ourPoints > theirPoints;
+                const weWon = (d.ourScore || 0) > (d.theirScore || 0);
+                if (ourLed === weWon) leaderWon++;
+                total++;
+            });
+            return total > 0 ? { pct: leaderWon / total * 100, wins: leaderWon, total } : null;
+        }
+
         async function buildSideAdvantageSection(competitive) {
             if (!currentUser) return '';
             try {
@@ -7280,6 +7299,25 @@
                     html += `</div>`;
                 });
                 
+                // ── First Switch Win % ──────────────────────────────────────────
+                const _allSets = Object.values(_filteredVenueData).flatMap(vd => vd.sets);
+                const _p7Switch = calculateFirstSwitchWinPct(_allSets, 'normal');
+                const _p5Switch = calculateFirstSwitchWinPct(_allSets, 'deciding');
+                html += `<div style="background:rgba(255,255,255,0.05);border-radius:6px;padding:10px;margin-top:12px;">
+                    <div style="font-weight:bold;margin-bottom:8px;font-size:0.9em;letter-spacing:0.04em;">FIRST SWITCH WIN %</div>
+                    <div style="font-size:0.82em;opacity:0.65;margin-bottom:8px;">Team leading at the first side switch &rarr; set win rate</div>`;
+                if (_p7Switch !== null) {
+                    html += `<div class="stat-row"><span>P7 &mdash; leader at point 7</span><span><strong>${_p7Switch.pct.toFixed(1)}%</strong> <span style="opacity:0.55;font-size:0.85em;">(${_p7Switch.wins}/${_p7Switch.total})</span></span></div>`;
+                } else {
+                    html += `<div class="stat-row"><span>P7 &mdash; leader at point 7</span><span style="opacity:0.45;">No data</span></div>`;
+                }
+                if (_p5Switch !== null) {
+                    html += `<div class="stat-row"><span>P5 &mdash; leader at point 5</span><span><strong>${_p5Switch.pct.toFixed(1)}%</strong> <span style="opacity:0.55;font-size:0.85em;">(${_p5Switch.wins}/${_p5Switch.total})</span></span></div>`;
+                } else {
+                    html += `<div class="stat-row"><span>P5 &mdash; leader at point 5</span><span style="opacity:0.45;">N/A</span></div>`;
+                }
+                html += `</div>`;
+
                 html += `</div>`;
                 return html;
             } catch(e) {
