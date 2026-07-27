@@ -2454,6 +2454,8 @@
 
         // ── Weather Auto-Refresh ─────────────────────────────────────────────
         let weatherRefreshInterval = null;
+        // Tracks the in-flight weather fetch promise so startMatch() can wait for it
+        let weatherFetchPromise = null;
         
         function startWeatherAutoRefresh() {
             stopWeatherAutoRefresh(); // clear any existing
@@ -2965,8 +2967,8 @@
                 // Update side options based on orientation
                 updateSideOptions();
                 
-                // Fetch weather for this venue
-                fetchWeather(venue);
+                // Fetch weather for this venue — store promise so startMatch() can wait for it
+                weatherFetchPromise = fetchWeather(venue).finally(() => { weatherFetchPromise = null; });
             }
         }
 
@@ -3044,7 +3046,7 @@
             event.target.classList.add('selected');
         }
 
-        function startMatch() {
+        async function startMatch() {
             const yourName = document.getElementById('playerName') ? document.getElementById('playerName').value.trim() : '';
             const partnerName = document.getElementById('partnerName').value.trim();
             const opp1Name = document.getElementById('opponent1Name').value.trim();
@@ -3135,7 +3137,17 @@
             
             // Set 1 always starts as normal game type (to 21, switch every 7)
             matchSetup.gameType = 'normal';
-            
+
+            // If weather fetch is still in flight, wait for it before locking in weatherAtSetStart.
+            // fetchWeather() has an 8s internal timeout so this always resolves promptly.
+            // If it fails/times out, matchSetup.weather stays null — stored accurately as null.
+            if (!matchSetup.weather && weatherFetchPromise) {
+                const startBtn = document.querySelector('button[onclick="startMatch()"]');
+                if (startBtn) { startBtn.disabled = true; startBtn.textContent = 'Getting weather\u2026'; }
+                await weatherFetchPromise;
+                if (startBtn) { startBtn.disabled = false; startBtn.textContent = 'Start Match'; }
+            }
+
             initializeLiveMatch();
             hideAllScreens();
             document.getElementById('liveMatchScreen').classList.remove('hidden');
