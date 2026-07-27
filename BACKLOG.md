@@ -2,6 +2,22 @@
 
 ## Critical (Blocks Data Accuracy)
 
+### Set 2 Auto-Complete Not Firing
+In Set 2, one team's first server is deferred until their first sideout. When that sideout occurs, `scorePoint()` returns early — before reaching `checkSetComplete()` — to show the server-selection overlay. After the user picks a server, `selectOtherTeamFirstServer()` resumed play but only called `updateMatchDisplay()`, never `checkSetComplete()`. If the set-winning point caused that sideout, the win was permanently skipped. The match continued as an open set, and Force End then created a phantom 3rd set, corrupting the match score (showing 3-0 instead of 2-0).
+
+**Fix:** Added `checkSetComplete()` after `updateMatchDisplay()` in `selectOtherTeamFirstServer()` (~line 4758).
+**Status:** Fixed in commit `2d2a505` — pending push.
+
+---
+
+### Firestore Undefined Field on Save — sanitize() Not Running
+In `saveSetToFirestore`, the `sanitize()` function built a correct `out` object replacing `undefined` values with `null`, but then returned the original `obj` instead of `out`. The sanitize was a no-op for all nested objects, leaving `undefined` fields that Firestore rejected with "Unsupported field value: undefined". Affected every `.add()` and `.update()` call on the sets collection.
+
+**Fix:** Changed `return obj === undefined ? null : obj` to `return out` inside the object branch of `sanitize()` (~line 5230).
+**Status:** Fixed in commit `2d2a505` — pending push.
+
+---
+
 ### Firestore Sets Rule Not Published
 Side Advantage, Server Performance (All Time), and Today data all fail with permission-denied if this rule is not in Firebase console:
 ```
