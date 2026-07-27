@@ -4753,10 +4753,11 @@
                 overlay.remove();
             }
             
-            // Resume the match - update display
+            // Resume the match - update display, then check if the set just ended
             updateMatchDisplay();
+            checkSetComplete();
         }
-        
+
         function startNextSet() {
             try {
                 console.log('[SET2] startNextSet called');
@@ -5226,7 +5227,7 @@
                     for (const k of Object.keys(obj)) {
                         out[k] = obj[k] === undefined ? null : sanitize(obj[k]);
                     }
-                    return obj === undefined ? null : obj;
+                    return out;
                 }
                 return obj === undefined ? null : obj;
             };
