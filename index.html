@@ -6899,7 +6899,12 @@
 
             // ── SECTION 10: COIN TOSS ADVANTAGE ─────────────────────────────
             html += buildCoinTossAdvantageSection(stats);
-            
+
+            html += `<hr style="border-color: rgba(255,255,255,0.1); margin: 15px 0;">`;
+
+            // ── SECTION 11: SCORE-STATE WIN PROBABILITY ───────────────────────
+            html += await buildScoreStateWinProbSection();
+
             if (!html) {
                 html = '<div class="stat-box" style="text-align:center; padding:40px;"><p style="opacity:0.8;">Start a match or complete some sets to see data here.</p></div>';
             }
@@ -7189,7 +7194,109 @@
                     <button onclick="confirmResetStats()" style="margin-top:8px; width:100%; padding:6px; background:rgba(255,255,255,0.08); border:1px solid rgba(255,255,255,0.2); border-radius:6px; color:white; font-size:0.8em; cursor:pointer;">Reset All-Time Stats</button>
                 </div>`;
         }
-        
+
+        // ── SECTION 11: SCORE-STATE WIN PROBABILITY ───────────────────────────
+        async function buildScoreStateWinProbSection() {
+            // All Time scope only — other scopes lack enough sets to be meaningful
+            if (currentDataScope !== 'allTime') return '';
+            if (!currentUser) return '';
+            try {
+                const sswpSnap = await db.collection('sets')
+                    .where('userId', '==', currentUser.uid)
+                    .limit(500).get();
+
+                // Six checkpoint buckets: { youTotal, youWon, oppTotal, oppWon }
+                // "you" = our team was the leading team at that checkpoint
+                // "opp" = opponent was the leading team at that checkpoint
+                const mkB = () => ({ youTotal: 0, youWon: 0, oppTotal: 0, oppWon: 0 });
+                const sswp_b70 = mkB(), sswp_b61 = mkB(), sswp_b52 = mkB(), sswp_b43 = mkB();
+                const sswp_b14 = mkB(), sswp_b21 = mkB();
+
+                sswpSnap.docs.forEach(doc => {
+                    const sd = doc.data();
+                    if (sd.gameType !== 'regular') return;
+                    if (!sd.complete) return;
+                    const ph = sd.pointHistory;
+                    if (!Array.isArray(ph) || ph.length === 0) return;
+
+                    const weWon = (sd.ourScore || 0) > (sd.theirScore || 0);
+                    const hitAt = (target) =>
+                        ph.find(e => ((e.ourScore || 0) + (e.theirScore || 0)) === target) || null;
+
+                    // ─ Checkpoint at 7 total points ─
+                    const e7 = hitAt(7);
+                    if (e7) {
+                        const o7 = e7.ourScore || 0, t7 = e7.theirScore || 0;
+                        const top7 = Math.max(o7, t7);
+                        const weAhead7 = o7 > t7;
+                        const bkt7 = top7 === 7 ? sswp_b70
+                                   : top7 === 6 ? sswp_b61
+                                   : top7 === 5 ? sswp_b52 : sswp_b43;
+                        if (weAhead7) { bkt7.youTotal++; if (weWon) bkt7.youWon++; }
+                        else          { bkt7.oppTotal++; if (!weWon) bkt7.oppWon++; }
+                    }
+
+                    // ─ Checkpoint at 14 total points (skip 7-7 ties) ─
+                    const e14 = hitAt(14);
+                    if (e14) {
+                        const o14 = e14.ourScore || 0, t14 = e14.theirScore || 0;
+                        if (o14 !== t14) {
+                            const weAhead14 = o14 > t14;
+                            if (weAhead14) { sswp_b14.youTotal++; if (weWon) sswp_b14.youWon++; }
+                            else           { sswp_b14.oppTotal++; if (!weWon) sswp_b14.oppWon++; }
+                        }
+                    }
+
+                    // ─ Checkpoint at 21 total points ─
+                    const e21 = hitAt(21);
+                    if (e21) {
+                        const o21 = e21.ourScore || 0, t21 = e21.theirScore || 0;
+                        const weAhead21 = o21 > t21;
+                        if (weAhead21) { sswp_b21.youTotal++; if (weWon) sswp_b21.youWon++; }
+                        else           { sswp_b21.oppTotal++; if (!weWon) sswp_b21.oppWon++; }
+                    }
+                });
+
+                const sswpPct = (won, n) => n > 0 ? Math.round(won / n * 100) + '%' : null;
+
+                const sswpRows = (bkt) => {
+                    const allN = bkt.youTotal + bkt.oppTotal;
+                    const allWon = bkt.youWon + bkt.oppWon;
+                    const yv = bkt.youTotal > 0 ? sswpPct(bkt.youWon, bkt.youTotal) + ` (n=${bkt.youTotal})` : 'No data yet';
+                    const ov = bkt.oppTotal > 0 ? sswpPct(bkt.oppWon, bkt.oppTotal) + ` (n=${bkt.oppTotal})` : 'No data yet';
+                    const av = allN > 0 ? sswpPct(allWon, allN) + ` (n=${allN})` : 'No data yet';
+                    return `<div class="stat-row"><span style="opacity:0.75;">You led</span><span>${yv}</span></div>
+                        <div class="stat-row"><span style="opacity:0.75;">Opponent led</span><span>${ov}</span></div>
+                        <div class="stat-row" style="background:rgba(255,255,255,0.07);"><span>Overall</span><span><strong>${av}</strong></span></div>`;
+                };
+
+                const sswpBlock = (label, bkt) =>
+                    `<div style="background:rgba(255,255,255,0.05);border-radius:7px;padding:10px 12px;margin-bottom:8px;">
+                        <div style="font-weight:bold;font-size:0.85em;letter-spacing:0.03em;margin-bottom:6px;">${label}</div>
+                        ${sswpRows(bkt)}
+                    </div>`;
+
+                const sswpHdr = 'font-size:0.78em;font-weight:bold;opacity:0.5;text-transform:uppercase;letter-spacing:0.05em;margin:10px 0 5px;';
+
+                return `<div class="stat-box">
+                    <h3>📊 SCORE-STATE WIN PROBABILITY</h3>
+                    <div style="font-size:0.82em;opacity:0.65;margin-bottom:12px;line-height:1.5;">21-pt sets only. How often does the leading team at each checkpoint go on to win?</div>
+                    <div style="${sswpHdr}">At 7 total points</div>
+                    ${sswpBlock('Ahead 7-0', sswp_b70)}
+                    ${sswpBlock('Ahead 6-1', sswp_b61)}
+                    ${sswpBlock('Ahead 5-2', sswp_b52)}
+                    ${sswpBlock('Ahead 4-3', sswp_b43)}
+                    <div style="${sswpHdr}">At 14 total points (7-7 ties excluded)</div>
+                    ${sswpBlock('Leading at 14 pts', sswp_b14)}
+                    <div style="${sswpHdr}">At 21 total points</div>
+                    ${sswpBlock('Leading at 21 pts', sswp_b21)}
+                </div>`;
+            } catch(e) {
+                console.error('[SCORE-STATE]', e);
+                return '';
+            }
+        }
+
         // ── SECTION 4a: Live Side Section (This Set / This Match) ────────────
         function buildLiveSideSection(displayState, displaySetup) {
             if (!displayState) return '';
