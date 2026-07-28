@@ -6905,6 +6905,11 @@
             // ── SECTION 11: SCORE-STATE WIN PROBABILITY ───────────────────────
             html += await buildScoreStateWinProbSection();
 
+            html += `<hr style="border-color: rgba(255,255,255,0.1); margin: 15px 0;">`;
+
+            // ── SECTION 12: SCORE-STATE WIN PROBABILITY — 15-POINT SETS ─────
+            html += await buildScoreStateWinProb15Section();
+
             if (!html) {
                 html = '<div class="stat-box" style="text-align:center; padding:40px;"><p style="opacity:0.8;">Start a match or complete some sets to see data here.</p></div>';
             }
@@ -7293,6 +7298,107 @@
                 </div>`;
             } catch(e) {
                 console.error('[SCORE-STATE]', e);
+                return '';
+            }
+        }
+
+        async function buildScoreStateWinProb15Section() {
+            // All Time scope only — other scopes lack enough sets to be meaningful
+            if (currentDataScope !== 'allTime') return '';
+            if (!currentUser) return '';
+            try {
+                const sswp15Snap = await db.collection('sets')
+                    .where('userId', '==', currentUser.uid)
+                    .limit(500).get();
+
+                // Five checkpoint buckets: { youTotal, youWon, oppTotal, oppWon }
+                // "you" = our team was the leading team at that checkpoint
+                // "opp" = opponent was the leading team at that checkpoint
+                const mk15B = () => ({ youTotal: 0, youWon: 0, oppTotal: 0, oppWon: 0 });
+                const sswp15_b50 = mk15B(), sswp15_b41 = mk15B(), sswp15_b32 = mk15B();
+                const sswp15_b10 = mk15B(), sswp15_b15 = mk15B();
+
+                sswp15Snap.docs.forEach(doc => {
+                    const sd = doc.data();
+                    // Real 15-pt deciding sets only — excludes V15 virtual snapshots
+                    // (V15 is stored as a field on 'normal'/'regular' set docs, never as gameType='deciding')
+                    if (sd.gameType !== 'deciding') return;
+                    if (!sd.complete) return;
+                    const ph = sd.pointHistory;
+                    if (!Array.isArray(ph) || ph.length === 0) return;
+
+                    const weWon = (sd.ourScore || 0) > (sd.theirScore || 0);
+                    const hitAt15 = (target) =>
+                        ph.find(e => ((e.ourScore || 0) + (e.theirScore || 0)) === target) || null;
+
+                    // ─ Checkpoint at 5 total points ─
+                    const e5 = hitAt15(5);
+                    if (e5) {
+                        const o5 = e5.ourScore || 0, t5 = e5.theirScore || 0;
+                        const top5 = Math.max(o5, t5);
+                        const weAhead5 = o5 > t5;
+                        const bkt5 = top5 === 5 ? sswp15_b50
+                                   : top5 === 4 ? sswp15_b41 : sswp15_b32;
+                        if (weAhead5) { bkt5.youTotal++; if (weWon) bkt5.youWon++; }
+                        else          { bkt5.oppTotal++; if (!weWon) bkt5.oppWon++; }
+                    }
+
+                    // ─ Checkpoint at 10 total points (skip 5-5 ties) ─
+                    const e10 = hitAt15(10);
+                    if (e10) {
+                        const o10 = e10.ourScore || 0, t10 = e10.theirScore || 0;
+                        if (o10 !== t10) {
+                            const weAhead10 = o10 > t10;
+                            if (weAhead10) { sswp15_b10.youTotal++; if (weWon) sswp15_b10.youWon++; }
+                            else           { sswp15_b10.oppTotal++; if (!weWon) sswp15_b10.oppWon++; }
+                        }
+                    }
+
+                    // ─ Checkpoint at 15 total points ─
+                    const e15 = hitAt15(15);
+                    if (e15) {
+                        const o15 = e15.ourScore || 0, t15 = e15.theirScore || 0;
+                        const weAhead15 = o15 > t15;
+                        if (weAhead15) { sswp15_b15.youTotal++; if (weWon) sswp15_b15.youWon++; }
+                        else           { sswp15_b15.oppTotal++; if (!weWon) sswp15_b15.oppWon++; }
+                    }
+                });
+
+                const sswp15Pct = (won, n) => n > 0 ? Math.round(won / n * 100) + '%' : null;
+
+                const sswp15Rows = (bkt) => {
+                    const allN = bkt.youTotal + bkt.oppTotal;
+                    const allWon = bkt.youWon + bkt.oppWon;
+                    const yv = bkt.youTotal > 0 ? sswp15Pct(bkt.youWon, bkt.youTotal) + ` (n=${bkt.youTotal})` : 'No data yet';
+                    const ov = bkt.oppTotal > 0 ? sswp15Pct(bkt.oppWon, bkt.oppTotal) + ` (n=${bkt.oppTotal})` : 'No data yet';
+                    const av = allN > 0 ? sswp15Pct(allWon, allN) + ` (n=${allN})` : 'No data yet';
+                    return `<div class="stat-row"><span style="opacity:0.75;">You led</span><span>${yv}</span></div>
+                        <div class="stat-row"><span style="opacity:0.75;">Opponent led</span><span>${ov}</span></div>
+                        <div class="stat-row" style="background:rgba(255,255,255,0.07);"><span>Overall</span><span><strong>${av}</strong></span></div>`;
+                };
+
+                const sswp15Block = (label, bkt) =>
+                    `<div style="background:rgba(255,255,255,0.05);border-radius:7px;padding:10px 12px;margin-bottom:8px;">
+                        <div style="font-weight:bold;font-size:0.85em;letter-spacing:0.03em;margin-bottom:6px;">${label}</div>
+                        ${sswp15Rows(bkt)}
+                    </div>`;
+
+                const sswp15Hdr = 'font-size:0.78em;font-weight:bold;opacity:0.5;text-transform:uppercase;letter-spacing:0.05em;margin:10px 0 5px;';
+
+                return `<div class="stat-box">
+                    <h3>📊 SCORE-STATE WIN PROBABILITY — 15-POINT SETS</h3>
+                    <div style="font-size:0.82em;opacity:0.65;margin-bottom:12px;line-height:1.5;">15-pt deciding sets only. Excludes V15 virtual data. How often does the leading team at each checkpoint go on to win?</div>
+                    <div style="${sswp15Hdr}">At 5 total points</div>
+                    ${sswp15Block('Ahead 5-0', sswp15_b50)}
+                    ${sswp15Block('Ahead 4-1', sswp15_b41)}
+                    ${sswp15Block('Ahead 3-2', sswp15_b32)}
+                    <div style="${sswp15Hdr}">At 10 total points (5-5 ties excluded)</div>
+                    ${sswp15Block('Leading at 10 pts', sswp15_b10)}
+                    <div style="${sswp15Hdr}">At 15 total points</div>
+                    ${sswp15Block('Leading at 15 pts', sswp15_b15)}
+                </div>`;
+            } catch(e) {
+                console.error('[SCORE-STATE-15]', e);
                 return '';
             }
         }
