@@ -7543,11 +7543,25 @@
                     const sidePoints = {};
                     let totalPointsSum = 0;
                     let switchCount = 0;
-                    
+                    let totalPointsSum21 = 0, n21 = 0;
+                    let totalPointsSum15 = 0, n15 = 0;
+
                     sets.forEach(d => {
                         const segs = d.completedSegments || [];
                         switchCount += segs.length;
                         totalPointsSum += (d.totalPointsPlayed || d.ourScore + d.theirScore || 0);
+                        if (d.gameType === 'deciding') {
+                            totalPointsSum15 += (d.totalPointsPlayed || d.ourScore + d.theirScore || 0);
+                            n15++;
+                        } else {
+                            totalPointsSum21 += (d.totalPointsPlayed || d.ourScore + d.theirScore || 0);
+                            n21++;
+                            // V15 virtual snapshot from this 21-pt set counts toward 15-pt average
+                            if (d.virtual15?.totalPoints) {
+                                totalPointsSum15 += d.virtual15.totalPoints;
+                                n15++;
+                            }
+                        }
                         segs.forEach(seg => {
                             if (!sidePoints[seg.side]) sidePoints[seg.side] = { our: 0, their: 0, segments: 0 };
                             sidePoints[seg.side].our += seg.ourPoints || 0;
@@ -7584,18 +7598,30 @@
                             </div>`;
                     });
                     
-                    // Switch math spelled out
-                    if (n > 0 && totalPointsSum > 0) {
-                        const avgPts = totalPointsSum / n;
-                        const switchInterval21 = 7, switchInterval15 = 5;
-                        [{ interval: switchInterval21, label: '21-pt' }, { interval: switchInterval15, label: '15-pt' }].forEach(({ interval, label }) => {
-                            const switches = Math.floor(avgPts / interval);
-                            const remainder = Math.round(avgPts % interval);
-                            const endSide = switches % 2 === 0 ? 'starting side' : 'opposite side';
+                    // Switch math spelled out — separate averages for each set type
+                    if (n > 0) {
+                        const avgPts21 = n21 > 0 ? totalPointsSum21 / n21 : null;
+                        const avgPts15 = n15 > 0 ? totalPointsSum15 / n15 : null;
+                        if (avgPts21 !== null) {
+                            const sw21 = Math.floor(avgPts21 / 7);
+                            const rem21 = Math.round(avgPts21 % 7);
+                            const end21 = sw21 % 2 === 0 ? 'starting side' : 'opposite side';
                             html += `<div style="font-size:0.85em;opacity:0.8;padding:6px 0;border-top:1px solid rgba(255,255,255,0.08);margin-top:6px;">
-                                In ${label} sets you switch <strong>${switches}</strong> times, ending on your <strong>${endSide}</strong> for <strong>${remainder}</strong> extra serves.
+                                In 21-pt sets you switch <strong>${sw21}</strong> times, ending on your <strong>${end21}</strong> for <strong>${rem21}</strong> extra serves.
                             </div>`;
-                        });
+                        }
+                        if (avgPts15 !== null) {
+                            const sw15 = Math.floor(avgPts15 / 5);
+                            const rem15 = Math.round(avgPts15 % 5);
+                            const end15 = sw15 % 2 === 0 ? 'starting side' : 'opposite side';
+                            html += `<div style="font-size:0.85em;opacity:0.8;padding:6px 0;border-top:1px solid rgba(255,255,255,0.08);margin-top:6px;">
+                                In 15-pt sets you switch <strong>${sw15}</strong> times, ending on your <strong>${end15}</strong> for <strong>${rem15}</strong> extra serves.
+                            </div>`;
+                        } else {
+                            html += `<div style="font-size:0.85em;opacity:0.8;padding:6px 0;border-top:1px solid rgba(255,255,255,0.08);margin-top:6px;">
+                                In 15-pt sets: <strong>No data yet.</strong>
+                            </div>`;
+                        }
                     }
                     html += `</div>`;
                 });
