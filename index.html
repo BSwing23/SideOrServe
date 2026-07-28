@@ -9154,8 +9154,13 @@
                 console.log('[COIN TOSS] Using aggregated data from', matchScore.setsCompleted.length, 'completed set(s)');
             } else {
                 // Use current match state (during active set)
-                side1Stats = matchState.p7Stats.side1;
-                side2Stats = matchState.p7Stats.side2;
+                if (!matchState.p7Stats) {
+                    side1Stats = { our: [], their: [] };
+                    side2Stats = { our: [], their: [] };
+                } else {
+                    side1Stats = matchState.p7Stats.side1;
+                    side2Stats = matchState.p7Stats.side2;
+                }
                 console.log('[COIN TOSS] Using current match state');
             }
             
