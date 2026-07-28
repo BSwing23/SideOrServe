@@ -7577,8 +7577,25 @@
                     html += `<div style="font-size:0.85em;opacity:0.7;margin-bottom:8px;">Avg. total points per set: ${avgTotalPoints} &nbsp;|&nbsp; ${n} set${n!==1?'s':''} tracked</div>`;
                     html += sampleDisclaimer(n);
                     
+                    // Opposite-side lookup for pooled metric computation
+                    const getOppSide = s => {
+                        const oppMap = { south:'North', north:'South', east:'West', west:'East',
+                                         southeast:'Northwest', northwest:'Southeast', southwest:'Northeast', northeast:'Southwest' };
+                        const oppName = oppMap[s.toLowerCase()];
+                        return oppName ? (Object.keys(sidePoints).find(k => k.toLowerCase() === oppName.toLowerCase()) || null) : null;
+                    };
                     sides.forEach(side => {
                         const sp = sidePoints[side];
+                        // Pooled side-advantage metric: points won BY whoever is standing ON this side (both teams combined).
+                        // When your team is on this side, they score sp.our.
+                        // When opponents are on this side (your team on opposite), opponents score oppSp.their.
+                        const oppKey = getOppSide(side);
+                        const oppSp = oppKey ? sidePoints[oppKey] : null;
+                        const pooledThis = sp.our + (oppSp ? oppSp.their : 0);
+                        const pooledOther = sp.their + (oppSp ? oppSp.our : 0);
+                        const pooledTotal = pooledThis + pooledOther;
+                        const pooledPct = pooledTotal > 0 ? (pooledThis / pooledTotal * 100).toFixed(1) : null;
+                        // Team-specific breakdown (your team's record while on this side)
                         const totalPts = sp.our + sp.their;
                         const ourPct = totalPts > 0 ? (sp.our / totalPts * 100).toFixed(1) : '—';
                         const theirPct = totalPts > 0 ? (sp.their / totalPts * 100).toFixed(1) : '—';
@@ -7591,6 +7608,9 @@
                         html += `
                             <div style="background:rgba(255,255,255,0.05);border-radius:6px;padding:10px;margin-bottom:6px;">
                                 <div style="font-weight:bold;margin-bottom:6px;">${side} Side</div>
+                                <div class="stat-row" style="margin-bottom:2px;"><span>Side advantage (pooled)</span><span><strong>${pooledPct !== null ? pooledPct + '%' : '—'}</strong></span></div>
+                                <div style="font-size:0.78em;opacity:0.55;margin-bottom:8px;">% of pts won by whoever stands here (both teams); &gt;50% = side edge</div>
+                                <div style="font-size:0.82em;opacity:0.65;margin-bottom:4px;padding-top:4px;border-top:1px solid rgba(255,255,255,0.06);">Your team on this side:</div>
                                 <div class="stat-row"><span>Your pair wins</span><span><strong>${ourPct}%</strong> of points</span></div>
                                 <div class="stat-row"><span>Opp pair wins</span><span><strong>${theirPct}%</strong> of points</span></div>
                                 <div class="stat-row" style="font-size:0.85em;opacity:0.8;"><span>Your P7 avg</span><span><strong>${avgOurStr}</strong> vs ${avgTheirStr}</span></div>
