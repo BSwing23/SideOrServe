@@ -6989,18 +6989,6 @@
                 }
             }
 
-            // 3. Role battle insight
-            const rb = st?.roleBattle;
-            if (rb?.blocker?.total > 0 || rb?.defender?.total > 0) {
-                const bPct = rb?.blocker?.total > 0 ? Math.round((rb.blocker.won||0)/rb.blocker.total*100) : null;
-                const dPct = rb?.defender?.total > 0 ? Math.round((rb.defender.won||0)/rb.defender.total*100) : null;
-                if (bPct !== null && dPct !== null) {
-                    const key = bPct >= dPct ? 'Blocker' : 'Defender';
-                    const pct = Math.max(bPct, dPct);
-                    lines.push({ icon: '⚔️', label: 'Win when your…', value: `${key} wins PS battle: ${pct}%`, highlight: false });
-                }
-            }
-
             const rows = lines.map(l => `
                 <div style="display:flex;justify-content:space-between;align-items:${l.subtext ? 'flex-start' : 'center'};padding:8px 10px;border-radius:6px;margin-bottom:4px;background:${l.highlight ? 'rgba(255,255,255,0.10)' : 'rgba(255,255,255,0.04)'};">
                     <span style="opacity:0.8;">${l.icon} ${l.label}</span>
