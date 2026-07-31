@@ -6991,7 +6991,7 @@
                     const diff = Math.abs(s1pts - s2pts);
                     const total = s1pts + s2pts;
                     const pct = (diff / total * 100).toFixed(1);
-                    lines.push({ icon: '📐', label: 'Better side this match', value: `${better} (+${pct}% raw)`, subtext: gasaPct !== null ? `Real SoS Advantage: +${gasaPct}% (scaled to avg tail rallies)` : null, highlight: false });
+                    lines.push({ icon: '📐', label: 'Better side this match', value: `${better} (+${pct}% raw)`, subtext: gasaPct !== null ? `Real SoS Advantage: +${gasaPct}% (adjusted for partial segments — points played on a side before it was cut short by a switch or set end)` : null, highlight: false });
                 }
             } else if (currentDataScope === 'allTime' && currentVenueFilter === 'all') {
                 // Compass data mixed across venues — aggregate is meaningless
@@ -7006,7 +7006,7 @@
                         const diff = Math.abs(aV - bV);
                         const total = aV + bV;
                         const pct = (diff / total * 100).toFixed(1);
-                        lines.push({ icon: '📐', label: 'Better side all-time', value: `${better.charAt(0).toUpperCase()+better.slice(1)} (+${pct}% raw)`, subtext: gasaPct !== null ? `Real SoS Advantage: +${gasaPct}% (scaled to avg tail rallies)` : null, highlight: false });
+                        lines.push({ icon: '📐', label: 'Better side all-time', value: `${better.charAt(0).toUpperCase()+better.slice(1)} (+${pct}% raw)`, subtext: gasaPct !== null ? `Real SoS Advantage: +${gasaPct}% (adjusted for partial segments — points played on a side before it was cut short by a switch or set end)` : null, highlight: false });
                         break;
                     }
                 }
