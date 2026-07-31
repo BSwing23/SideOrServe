@@ -2019,6 +2019,9 @@
                 if (document.getElementById('quickCoinTossVenue')) {
                     populateQuickToolVenues('quickCoinTossVenue');
                 }
+                if (document.getElementById('venueName')) {
+                    populateMatchSetupVenues();
+                }
                 
             } catch (error) {
                 console.error('[CUSTOM VENUE] Error:', error);
