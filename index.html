@@ -1142,6 +1142,17 @@
                 </select>
             </div>
 
+            <!-- Tier Filter (Today / All Time) -->
+            <div id="tierFilterRow" style="display:none; margin-bottom:10px;">
+                <select id="dashboardTierFilter" onchange="onTierFilterChange()" style="width:100%;padding:8px 10px;border-radius:6px;background:rgba(255,255,255,0.10);color:white;border:1px solid rgba(255,255,255,0.25);font-size:0.9em;cursor:pointer;">
+                    <option value="all">All Tiers</option>
+                    <option value="NCAA_Pro">NCAA / Pro (Tier 1)</option>
+                    <option value="Juniors_Elite">Juniors Elite — 16u-18u Club (Tier 2)</option>
+                    <option value="Juniors_Dev">Juniors Dev — 12u-14u Club (Tier 3)</option>
+                    <option value="Recreational">Recreational (Tier 4)</option>
+                </select>
+            </div>
+
             <!-- Set Type Toggle -->
             <div style="display: flex; gap: 5px; margin-bottom: 16px; justify-content: center;">
                 <button id="setType21Btn" onclick="setDataSetType('21')"
@@ -6442,9 +6453,15 @@
         let currentDataScope = 'thisSet';
         let currentSetType = '21'; // '21' or '15'
         let currentVenueFilter = 'all'; // 'all' or a venueId string
+        let currentTierFilter = 'all'; // 'all' or a competitionTier string
 
         function onVenueFilterChange() {
             currentVenueFilter = document.getElementById('dashboardVenueFilter')?.value || 'all';
+            updateDataTab();
+        }
+
+        function onTierFilterChange() {
+            currentTierFilter = document.getElementById('dashboardTierFilter')?.value || 'all';
             updateDataTab();
         }
 
@@ -6683,6 +6700,12 @@
             const _venueFilterRow = document.getElementById('venueFilterRow');
             if (_venueFilterRow) _venueFilterRow.style.display = currentDataScope === 'allTime' ? 'block' : 'none';
             if (currentDataScope !== 'allTime') currentVenueFilter = 'all';
+
+            // Show/hide tier filter row — meaningful for Today and All Time
+            const _tierFilterRow = document.getElementById('tierFilterRow');
+            const _tierFilterVisible = currentDataScope === 'today' || currentDataScope === 'allTime';
+            if (_tierFilterRow) _tierFilterRow.style.display = _tierFilterVisible ? 'block' : 'none';
+            if (!_tierFilterVisible) currentTierFilter = 'all';
 
             // Pre-compute venue-filtered RP buckets (All Time + specific venue)
             if (currentDataScope === 'allTime' && currentVenueFilter !== 'all' && currentUser) {
@@ -7465,8 +7488,7 @@
                     if (!setData.complete) return;
                     if (setData.includedInStats === false) return;
                     if (!setData.completedSegments?.length) return;
-                    const _saTier = matchSetup.competitionTier;
-                    if (_saTier && setData.competitionTier !== _saTier) return;
+                    if (currentTierFilter !== 'all' && setData.competitionTier !== currentTierFilter) return;
                     const vid = setData.venueId;
                     if (!vid) return;
                     if (competitive && !isCompetitiveSet(setData.ourScore, setData.theirScore, setData.gameType === 'deciding' ? 15 : 21)) return;
@@ -7790,11 +7812,10 @@
                     playerStats[name].sets++;
                 };
 
-                const _spTier = matchSetup.competitionTier;
                 snapshot.docs.forEach(doc => {
                     const d = doc.data();
                     if (!d.complete) return;
-                    if (_spTier && d.competitionTier !== _spTier) return;
+                    if (currentTierFilter !== 'all' && d.competitionTier !== currentTierFilter) return;
                     // Set type filter — deciding = 15pt, else 21pt
                     const isDeciding = d.gameType === 'deciding';
                     if (currentSetType === '15' && !isDeciding) return;
