@@ -1050,6 +1050,7 @@
         <div class="control-buttons">
             <button class="btn btn-secondary" onclick="undoPoint()" id="undoBtn" disabled>↩️ Undo</button>
             <button class="btn btn-secondary" onclick="forceSideSwitch()">🔄 Force Switch</button>
+            <button class="btn btn-secondary" onclick="showFixServerOverlay()">🔧 Fix Server</button>
             <button class="btn btn-secondary" onclick="showForceEndOptions()" style="background:rgba(0,0,0,0.2);border:1px solid rgba(255,255,255,0.5);color:white;font-size:0.85em;padding:8px 12px;">Force End</button>
             <button class="btn btn-secondary" onclick="saveAndGoHome()" style="background: rgba(255,255,255,0.15);">🏠 Home</button>
             <button class="btn btn-secondary" onclick="cancelMatch()" style="background:rgba(0,0,0,0.2);border:1px solid rgba(255,255,255,0.5);color:white;font-size:0.8em;padding:8px 12px;">Cancel</button>
@@ -3560,6 +3561,73 @@
 
         function forceSideSwitch() {
             switchSides();
+            updateMatchDisplay();
+        }
+
+        function showFixServerOverlay() {
+            const overlay = document.createElement('div');
+            overlay.id = 'fixServerOverlay';
+            overlay.style.cssText = `
+                position: fixed;
+                top: 0;
+                left: 0;
+                width: 100%;
+                height: 100%;
+                background: rgba(0,0,0,0.9);
+                z-index: 10000;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                padding: 20px;
+            `;
+
+            const dialog = document.createElement('div');
+            dialog.style.cssText = `
+                background: #982542;
+                padding: 30px;
+                border-radius: 10px;
+                max-width: 400px;
+                width: 100%;
+            `;
+
+            dialog.innerHTML = `
+                <h2 style="margin-top: 0; text-align: center;">🔧 Fix Server</h2>
+                <p style="text-align: center; margin-bottom: 20px;">
+                    Select the player who should serve next:
+                </p>
+                <div style="display: flex; flex-wrap: wrap; justify-content: center;">
+                    <button class="role-option" onclick="fixServer('you')" style="padding: 20px; font-size: 1.2em; margin: 5px; width: calc(50% - 10px);">
+                        ${userProfile.name}
+                    </button>
+                    <button class="role-option" onclick="fixServer('partner')" style="padding: 20px; font-size: 1.2em; margin: 5px; width: calc(50% - 10px);">
+                        ${matchSetup.partnerName}
+                    </button>
+                    <button class="role-option" onclick="fixServer('opp1')" style="padding: 20px; font-size: 1.2em; margin: 5px; width: calc(50% - 10px);">
+                        ${matchSetup.opponent1Name}
+                    </button>
+                    <button class="role-option" onclick="fixServer('opp2')" style="padding: 20px; font-size: 1.2em; margin: 5px; width: calc(50% - 10px);">
+                        ${matchSetup.opponent2Name}
+                    </button>
+                </div>
+                <div style="text-align: center; margin-top: 16px;">
+                    <button onclick="document.getElementById('fixServerOverlay').remove()" style="background: rgba(255,255,255,0.15); color: white; border: 1px solid rgba(255,255,255,0.3); padding: 8px 20px; border-radius: 6px; cursor: pointer; font-size: 0.9em;">Cancel</button>
+                </div>
+            `;
+
+            overlay.appendChild(dialog);
+            document.body.appendChild(overlay);
+        }
+
+        function fixServer(serverKey) {
+            if (serverKey === 'you' || serverKey === 'partner') {
+                matchState.currentServer = serverKey;
+                matchState.servingTeam = 'our';
+            } else {
+                matchState.currentServer = serverKey;
+                matchState.servingTeam = 'their';
+            }
+            const overlay = document.getElementById('fixServerOverlay');
+            if (overlay) overlay.remove();
             updateMatchDisplay();
         }
 
