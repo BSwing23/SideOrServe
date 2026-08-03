@@ -3070,12 +3070,12 @@
         
         function selectServingTeam(team) {
             matchSetup.servingTeam = team;
-            
+
             // Update UI
-            const container = event.target.closest('.role-selector');
+            const container = event.currentTarget.closest('.role-selector');
             container.querySelectorAll('.role-option').forEach(el => el.classList.remove('selected'));
-            event.target.classList.add('selected');
-            
+            event.currentTarget.classList.add('selected');
+
             // Server selections will happen when first point is scored
             // No need to show server selectors here
         }
