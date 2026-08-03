@@ -78,6 +78,9 @@ Tracking is implemented in sets15/sets21 buckets. Display exists. Needs more dat
 ### Momentum Split by Set Type
 `rpStats.momentum` is a single pool, not split by 21pt/15pt. Low priority until data volume justifies it.
 
+### Persist Data Tab Drawer Open/Closed State
+Data tab stat-box sections are now collapsible drawers (default collapsed). State is not persisted — every `updateDataTab()` re-render (scope change, tier/venue filter change, reload) resets all drawers to collapsed. Could track open section titles in a Set and re-apply `stat-box-expanded` after render if this becomes annoying in practice.
+
 ---
 
 ## Known Do-Not-Touch Items

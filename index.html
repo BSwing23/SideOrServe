@@ -236,6 +236,32 @@
             font-size: 1.1em;
             color: white;
         }
+        /* Data tab collapsible drawers — scoped to #dataTabContent only */
+        #dataTabContent .stat-box h3 {
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            user-select: none;
+        }
+        #dataTabContent .stat-box h3::after {
+            content: '▸';
+            font-size: 0.8em;
+            margin-left: 10px;
+            flex-shrink: 0;
+            transition: transform 0.25s ease;
+        }
+        #dataTabContent .stat-box.stat-box-expanded h3::after {
+            transform: rotate(90deg);
+        }
+        #dataTabContent .stat-box-content {
+            max-height: 0;
+            overflow: hidden;
+            transition: max-height 0.3s ease;
+        }
+        #dataTabContent .stat-box.stat-box-expanded .stat-box-content {
+            max-height: 2000px;
+        }
         .stat-row {
             display: flex;
             justify-content: space-between;
@@ -6697,6 +6723,27 @@
             return margin < marginThreshold && Math.max(ourScore, theirScore) <= scoreCap;
         }
         
+        // Generic post-render enhancement: turns every .stat-box in the Data tab into a
+        // collapsible drawer without touching any of the build*Section functions.
+        function enhanceDataTabStatBoxDrawers(container) {
+            container.querySelectorAll('.stat-box').forEach(box => {
+                if (box.querySelector(':scope > .stat-box-content')) return;
+                const h3 = box.firstElementChild;
+                if (!h3 || h3.tagName !== 'H3') return;
+                const wrap = document.createElement('div');
+                wrap.className = 'stat-box-content';
+                while (h3.nextSibling) wrap.appendChild(h3.nextSibling);
+                box.appendChild(wrap);
+            });
+            if (!container.dataset.drawerDelegated) {
+                container.addEventListener('click', (e) => {
+                    const h3 = e.target.closest('.stat-box > h3');
+                    if (h3) h3.parentElement.classList.toggle('stat-box-expanded');
+                });
+                container.dataset.drawerDelegated = 'true';
+            }
+        }
+
         async function updateDataTab() {
             const content = document.getElementById('dataTabContent');
             if (!content) return;
@@ -7016,8 +7063,9 @@
             }
             
             content.innerHTML = html;
+            enhanceDataTabStatBoxDrawers(content);
         }
-        
+
         // ── LEADING RECOMMENDATION ───────────────────────────────────────────
         function buildLeadingRecommendation(stats, displayState, displaySetup, inMatch) {
             const lines = [];
