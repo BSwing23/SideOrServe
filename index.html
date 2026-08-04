@@ -7014,17 +7014,22 @@
             const isLiveScope = currentDataScope === 'thisSet' || currentDataScope === 'thisMatch';
             const isHistScope = currentDataScope === 'today' || currentDataScope === 'allTime';
 
-            // ── SECTION 1: WHAT THE DATA SAYS ───────────────────────────────
+            // ── SECTION 1: COIN TOSS DATA ────────────────────────────────────
             html += buildLeadingRecommendation(stats, displayState, displaySetup, inMatch);
 
             html += `<hr style="border-color: rgba(255,255,255,0.1); margin: 15px 0;">`;
 
-            // ── SECTION 2: RP AVERAGES ───────────────────────────────────────
+            // ── SECTION 2: SIDE BIAS (venue-specific) ────────────────────────
+            html += await buildSideBiasSection(competitive);
+
+            html += `<hr style="border-color: rgba(255,255,255,0.1); margin: 15px 0;">`;
+
+            // ── SECTION 3: RP AVERAGES ───────────────────────────────────────
             html += buildRPAveragesSection(stats, displayState, displaySetup, inMatch);
 
             html += `<hr style="border-color: rgba(255,255,255,0.1); margin: 15px 0;">`;
 
-            // ── SECTION 3: SIDE PERFORMANCE ─────────────────────────────────
+            // ── SECTION 4: SIDE PERFORMANCE ─────────────────────────────────
             if (isLiveScope && inMatch && displayState) {
                 html += buildLiveSideSection(displayState, displaySetup);
             }
@@ -7032,7 +7037,7 @@
 
             html += `<hr style="border-color: rgba(255,255,255,0.1); margin: 15px 0;">`;
 
-            // ── SECTION 4: SERVER PERFORMANCE ───────────────────────────────
+            // ── SECTION 5: SERVER PERFORMANCE ───────────────────────────────
             if (isLiveScope && inMatch && displayState) {
                 html += buildLiveServerSection(displayState, displaySetup);
             }
@@ -7040,28 +7045,23 @@
 
             html += `<hr style="border-color: rgba(255,255,255,0.1); margin: 15px 0;">`;
 
-            // ── SECTION 5: ROLE MATCHUP ──────────────────────────────────────
+            // ── SECTION 6: ROLE MATCHUP ──────────────────────────────────────
             html += buildRoleMatchupSection(stats, displayState, displaySetup, inMatch);
 
             html += `<hr style="border-color: rgba(255,255,255,0.1); margin: 15px 0;">`;
 
-            // ── SECTION 6: MOMENTUM ──────────────────────────────────────────
+            // ── SECTION 7: MOMENTUM ──────────────────────────────────────────
             html += buildMomentumSection(stats, displayState, inMatch);
 
             html += `<hr style="border-color: rgba(255,255,255,0.1); margin: 15px 0;">`;
 
-            // ── SECTION 7: ROLE BATTLE WIN % ─────────────────────────────────
+            // ── SECTION 8: ROLE BATTLE WIN % ─────────────────────────────────
             html += buildRoleBattleSection(stats);
 
             html += `<hr style="border-color: rgba(255,255,255,0.1); margin: 15px 0;">`;
 
-            // ── SECTION 8: SERVE/RECEIVE WIN % ───────────────────────────────
+            // ── SECTION 9: SERVE/RECEIVE WIN % ───────────────────────────────
             html += buildServeReceiveSection(stats);
-
-            html += `<hr style="border-color: rgba(255,255,255,0.1); margin: 15px 0;">`;
-
-            // ── SECTION 9: SIDE BIAS ─────────────────────────────────────────
-            html += buildSideBiasSection(stats);
 
             html += `<hr style="border-color: rgba(255,255,255,0.1); margin: 15px 0;">`;
 
@@ -7168,7 +7168,7 @@
                 </div>`).join('');
 
             return `<div class="stat-box" style="border-left-color:rgba(255,255,255,0.5);margin-bottom:4px;">
-                <h3>⚡ WHAT THE DATA SAYS</h3>
+                <h3>⚡ COIN TOSS DATA</h3>
                 ${coinTossBlock}
                 ${rows}
             </div>`;
@@ -7376,7 +7376,7 @@
 
                 sswpSnap.docs.forEach(doc => {
                     const sd = doc.data();
-                    if (sd.gameType !== 'regular') return;
+                    if (sd.gameType === 'deciding') return;
                     if (!sd.complete) return;
                     const ph = sd.pointHistory;
                     if (!Array.isArray(ph) || ph.length === 0) return;
@@ -7421,27 +7421,36 @@
 
                 const sswpPct = (won, n) => n > 0 ? Math.round(won / n * 100) + '%' : null;
 
+                const sswpCol = (title, val, n) => `
+                    <div style="flex:1;text-align:center;">
+                        <div style="opacity:0.6;font-size:0.72em;text-transform:uppercase;letter-spacing:0.03em;margin-bottom:2px;">${title}</div>
+                        <div style="font-weight:bold;font-size:1.05em;">${val}</div>
+                        <div style="opacity:0.5;font-size:0.7em;">n=${n}</div>
+                    </div>`;
+
                 const sswpRows = (bkt) => {
                     const allN = bkt.youTotal + bkt.oppTotal;
                     const allWon = bkt.youWon + bkt.oppWon;
-                    const yv = bkt.youTotal > 0 ? sswpPct(bkt.youWon, bkt.youTotal) + ` (n=${bkt.youTotal})` : 'No data yet';
-                    const ov = bkt.oppTotal > 0 ? sswpPct(bkt.oppWon, bkt.oppTotal) + ` (n=${bkt.oppTotal})` : 'No data yet';
-                    const av = allN > 0 ? sswpPct(allWon, allN) + ` (n=${allN})` : 'No data yet';
-                    return `<div class="stat-row"><span style="opacity:0.75;">You led</span><span>${yv}</span></div>
-                        <div class="stat-row"><span style="opacity:0.75;">Opponent led</span><span>${ov}</span></div>
-                        <div class="stat-row" style="background:rgba(255,255,255,0.07);"><span>Overall</span><span><strong>${av}</strong></span></div>`;
+                    const yv = bkt.youTotal > 0 ? sswpPct(bkt.youWon, bkt.youTotal) : '—';
+                    const ov = bkt.oppTotal > 0 ? sswpPct(bkt.oppWon, bkt.oppTotal) : '—';
+                    const av = allN > 0 ? sswpPct(allWon, allN) : '—';
+                    return `<div style="display:flex;justify-content:space-between;gap:6px;">
+                        ${sswpCol('Your Win%', yv, bkt.youTotal)}
+                        ${sswpCol('Opp Win%', ov, bkt.oppTotal)}
+                        ${sswpCol('Overall', av, allN)}
+                    </div>`;
                 };
 
                 const sswpBlock = (label, bkt) =>
                     `<div style="background:rgba(255,255,255,0.05);border-radius:7px;padding:10px 12px;margin-bottom:8px;">
-                        <div style="font-weight:bold;font-size:0.85em;letter-spacing:0.03em;margin-bottom:6px;">${label}</div>
+                        <div style="font-weight:bold;font-size:0.85em;letter-spacing:0.03em;margin-bottom:8px;">${label}</div>
                         ${sswpRows(bkt)}
                     </div>`;
 
                 const sswpHdr = 'font-size:0.78em;font-weight:bold;opacity:0.5;text-transform:uppercase;letter-spacing:0.05em;margin:10px 0 5px;';
 
                 return `<div class="stat-box">
-                    <h3>📊 SCORE-STATE WIN PROBABILITY</h3>
+                    <h3>📊 SCORE-STATE WIN PROBABILITY — 21-POINT SETS</h3>
                     <div style="font-size:0.82em;opacity:0.65;margin-bottom:12px;line-height:1.5;">21-pt sets only. How often does the leading team at each checkpoint go on to win?</div>
                     <div style="${sswpHdr}">At 7 total points</div>
                     ${sswpBlock('Ahead 7-0', sswp_b70)}
@@ -7523,20 +7532,29 @@
 
                 const sswp15Pct = (won, n) => n > 0 ? Math.round(won / n * 100) + '%' : null;
 
+                const sswp15Col = (title, val, n) => `
+                    <div style="flex:1;text-align:center;">
+                        <div style="opacity:0.6;font-size:0.72em;text-transform:uppercase;letter-spacing:0.03em;margin-bottom:2px;">${title}</div>
+                        <div style="font-weight:bold;font-size:1.05em;">${val}</div>
+                        <div style="opacity:0.5;font-size:0.7em;">n=${n}</div>
+                    </div>`;
+
                 const sswp15Rows = (bkt) => {
                     const allN = bkt.youTotal + bkt.oppTotal;
                     const allWon = bkt.youWon + bkt.oppWon;
-                    const yv = bkt.youTotal > 0 ? sswp15Pct(bkt.youWon, bkt.youTotal) + ` (n=${bkt.youTotal})` : 'No data yet';
-                    const ov = bkt.oppTotal > 0 ? sswp15Pct(bkt.oppWon, bkt.oppTotal) + ` (n=${bkt.oppTotal})` : 'No data yet';
-                    const av = allN > 0 ? sswp15Pct(allWon, allN) + ` (n=${allN})` : 'No data yet';
-                    return `<div class="stat-row"><span style="opacity:0.75;">You led</span><span>${yv}</span></div>
-                        <div class="stat-row"><span style="opacity:0.75;">Opponent led</span><span>${ov}</span></div>
-                        <div class="stat-row" style="background:rgba(255,255,255,0.07);"><span>Overall</span><span><strong>${av}</strong></span></div>`;
+                    const yv = bkt.youTotal > 0 ? sswp15Pct(bkt.youWon, bkt.youTotal) : '—';
+                    const ov = bkt.oppTotal > 0 ? sswp15Pct(bkt.oppWon, bkt.oppTotal) : '—';
+                    const av = allN > 0 ? sswp15Pct(allWon, allN) : '—';
+                    return `<div style="display:flex;justify-content:space-between;gap:6px;">
+                        ${sswp15Col('Your Win%', yv, bkt.youTotal)}
+                        ${sswp15Col('Opp Win%', ov, bkt.oppTotal)}
+                        ${sswp15Col('Overall', av, allN)}
+                    </div>`;
                 };
 
                 const sswp15Block = (label, bkt) =>
                     `<div style="background:rgba(255,255,255,0.05);border-radius:7px;padding:10px 12px;margin-bottom:8px;">
-                        <div style="font-weight:bold;font-size:0.85em;letter-spacing:0.03em;margin-bottom:6px;">${label}</div>
+                        <div style="font-weight:bold;font-size:0.85em;letter-spacing:0.03em;margin-bottom:8px;">${label}</div>
                         ${sswp15Rows(bkt)}
                     </div>`;
 
@@ -7972,10 +7990,10 @@
                     }
                     if (!d.serverStats) return;
                     if (competitive && !isCompetitiveSet(d.ourScore, d.theirScore, isDeciding ? 15 : 21)) return;
-                    addPlayer(d.playerName,    d.playerRole,    d.serverStats.you);
-                    addPlayer(d.partnerName,   d.partnerRole,   d.serverStats.partner);
-                    addPlayer(d.opponent1Name, d.opponent1Role, d.serverStats.opp1);
-                    addPlayer(d.opponent2Name, d.opponent2Role, d.serverStats.opp2);
+                    addPlayer(d.playerName,  d.playerRole,  d.serverStats.you);
+                    addPlayer(d.partnerName, d.partnerRole, d.serverStats.partner);
+                    addPlayer('Opponents', null, d.serverStats.opp1);
+                    addPlayer('Opponents', null, d.serverStats.opp2);
                 });
 
                 if (Object.keys(playerStats).length === 0) return `<div class="stat-box"><h3>📈 SERVER PERFORMANCE</h3><div style="opacity:0.5;font-size:0.9em;padding:6px 0;">No server data yet for ${currentSetType}-point sets.</div></div>`;
@@ -8000,8 +8018,9 @@
                     const bg        = i % 2 === 0 ? 'background:rgba(152,30,50,0.2);' : '';
                     const nameLabel = name === yourName ? `<strong>${name}</strong>` : name;
                     const starBadge = isStar ? ' <span style="color:white;">★</span>' : '';
+                    const roleTag   = s.role ? ` <span style="opacity:0.55;font-size:0.8em;">(${s.role})</span>` : '';
                     return `<div class="stat-row" style="${bg}">
-                        <span>${nameLabel}${starBadge} <span style="opacity:0.55;font-size:0.8em;">(${s.role||'?'})</span></span>
+                        <span>${nameLabel}${starBadge}${roleTag}</span>
                         <span style="font-size:0.9em;">PS%: <strong>${psPct !== null ? psPct + '%' : '—'}</strong> &nbsp; P/T: <strong>${psPerTurn}</strong></span>
                     </div>`;
                 }).join('');
@@ -8141,41 +8160,118 @@
                 </div>`;
         }
 
-        // ── SECTION 10: Side Bias ─────────────────────────────────────────────
-        function buildSideBiasSection(stats) {
-            if (!stats?.sidePoints) return '';
+        // ── SECTION 2: Side Bias (venue-specific) ─────────────────────────────
+        async function buildSideBiasSection(competitive) {
+            if (!currentUser) return '';
+            try {
+                const todayStart = new Date(); todayStart.setHours(0,0,0,0);
+                const snapshot = await db.collection('sets')
+                    .where('userId', '==', currentUser.uid)
+                    .limit(500).get();
 
-            const sp = stats.sidePoints;
-            const pairs = [['north','south'], ['east','west']];
-            let html = `<div class="stat-box"><h3>🧭 SIDE BIAS</h3>
-                <div style="font-size:0.8em;opacity:0.6;margin-bottom:10px;">Total points scored on each side regardless of team — pure court/wind/sun data.</div>`;
+                // Group compass-direction point totals by venue — mixing venues
+                // together is invalid since North/South/East/West are venue-relative.
+                const venueBias = {};
+                const addSetSideData = (setData) => {
+                    if (!setData.complete) return;
+                    if (setData.includedInStats === false) return;
+                    if (!setData.completedSegments?.length) return;
+                    if (currentTierFilter !== 'all' && setData.competitionTier !== currentTierFilter) return;
+                    const vid = setData.venueId;
+                    if (!vid) return;
+                    if (competitive && !isCompetitiveSet(setData.ourScore, setData.theirScore, setData.gameType === 'deciding' ? 15 : 21)) return;
+                    const vname = setData.venue || vid;
+                    if (!venueBias[vid]) venueBias[vid] = { name: vname, sidePoints: {} };
+                    setData.completedSegments.forEach(seg => {
+                        if (!seg.side) return;
+                        const key = seg.side.toLowerCase();
+                        const pts = (seg.ourPoints || 0) + (seg.theirPoints || 0);
+                        venueBias[vid].sidePoints[key] = (venueBias[vid].sidePoints[key] || 0) + pts;
+                    });
+                };
 
-            pairs.forEach(([a, b]) => {
-                const aVal = sp[a] || 0;
-                const bVal = sp[b] || 0;
-                if (aVal === 0 && bVal === 0) return;
-                const total = aVal + bVal;
-                const aPct = total > 0 ? Math.round(aVal / total * 100) : 50;
-                const bPct = 100 - aPct;
-                const diff = Math.abs(aVal - bVal);
-                const better = aVal >= bVal ? a : b;
-                html += `
-                    <div style="margin-bottom:14px;">
-                        <div style="display:flex;justify-content:space-between;margin-bottom:4px;font-size:0.9em;">
-                            <span style="text-transform:capitalize;font-weight:bold;">${a.charAt(0).toUpperCase()+a.slice(1)}: ${aVal} pts (${aPct}%)</span>
-                            <span style="text-transform:capitalize;font-weight:bold;">${b.charAt(0).toUpperCase()+b.slice(1)}: ${bVal} pts (${bPct}%)</span>
-                        </div>
-                        <div style="height:8px;background:rgba(255,255,255,0.1);border-radius:4px;overflow:hidden;">
-                            <div style="height:8px;width:${aPct}%;background:rgba(255,255,255,0.7);border-radius:4px;"></div>
-                        </div>
-                        <div style="font-size:0.85em;margin-top:4px;color:white;">
-                            ${better.charAt(0).toUpperCase()+better.slice(1)} side advantage: +${diff} pts
-                        </div>
+                snapshot.docs.forEach(doc => {
+                    const d = doc.data();
+                    if (currentDataScope === 'today') {
+                        const ts = d.createdAt?.toDate ? d.createdAt.toDate() : new Date(d.createdAt || 0);
+                        if (ts < todayStart) return;
+                    }
+                    addSetSideData(d);
+                });
+
+                // Also fold in the in-memory active set from the current match
+                if (typeof matchState !== 'undefined' && matchState.completedSegments?.length && matchSetup?.venue) {
+                    addSetSideData({
+                        complete: true,
+                        includedInStats: true,
+                        completedSegments: matchState.completedSegments,
+                        venueId: matchSetup.venue,
+                        venue: matchSetup.venueName || matchSetup.venue,
+                        ourScore: matchState.ourScore,
+                        theirScore: matchState.theirScore,
+                        gameType: matchSetup.gameType
+                    });
+                }
+
+                const venueIds = Object.keys(venueBias);
+                if (venueIds.length === 0) return '';
+
+                // Resolve which venue to show: explicit filter, or the only venue played, else ask
+                let targetVid = null;
+                if (currentVenueFilter !== 'all' && venueBias[currentVenueFilter]) {
+                    targetVid = currentVenueFilter;
+                } else if (venueIds.length === 1) {
+                    targetVid = venueIds[0];
+                }
+
+                if (!targetVid) {
+                    return `<div class="stat-box"><h3>🧭 SIDE BIAS</h3>
+                        <div style="opacity:0.6;padding:10px;font-size:0.9em;">Data from ${venueIds.length} venues — select a specific venue above to see side bias.</div>
                     </div>`;
-            });
+                }
 
-            html += `</div>`;
-            return html;
+                const sp = venueBias[targetVid].sidePoints;
+                const venueName = venueBias[targetVid].name;
+                const pairs = [['north','south'], ['east','west']];
+                let html = `<div class="stat-box"><h3>🧭 SIDE BIAS — ${venueName.toUpperCase()}</h3>
+                    <div style="font-size:0.8em;opacity:0.6;margin-bottom:10px;">Total points scored on each side regardless of team — pure court/wind/sun data for this venue.</div>`;
+
+                let anyPair = false;
+                pairs.forEach(([a, b]) => {
+                    const aVal = sp[a] || 0;
+                    const bVal = sp[b] || 0;
+                    if (aVal === 0 && bVal === 0) return;
+                    anyPair = true;
+                    const total = aVal + bVal;
+                    const aPct = total > 0 ? Math.round(aVal / total * 100) : 50;
+                    const bPct = 100 - aPct;
+                    const diff = Math.abs(aVal - bVal);
+                    const better = aVal >= bVal ? a : b;
+                    html += `
+                        <div style="margin-bottom:14px;">
+                            <div style="display:flex;justify-content:space-between;margin-bottom:4px;font-size:0.9em;">
+                                <span style="text-transform:capitalize;font-weight:bold;">${a.charAt(0).toUpperCase()+a.slice(1)}: ${aVal} pts (${aPct}%)</span>
+                                <span style="text-transform:capitalize;font-weight:bold;">${b.charAt(0).toUpperCase()+b.slice(1)}: ${bVal} pts (${bPct}%)</span>
+                            </div>
+                            <div style="height:8px;background:rgba(255,255,255,0.1);border-radius:4px;overflow:hidden;">
+                                <div style="height:8px;width:${aPct}%;background:rgba(255,255,255,0.7);border-radius:4px;"></div>
+                            </div>
+                            <div style="font-size:0.85em;margin-top:4px;color:white;">
+                                ${better.charAt(0).toUpperCase()+better.slice(1)} side advantage: +${diff} pts
+                            </div>
+                        </div>`;
+                });
+
+                if (!anyPair) {
+                    html += `<div style="opacity:0.6;font-size:0.9em;">No compass-direction data yet for this venue.</div>`;
+                }
+
+                html += `</div>`;
+                return html;
+            } catch(e) {
+                console.error('[DATA] Side bias error:', e);
+                return '';
+            }
         }
 
         function updateCoinTossDisplay(targetEl) {
