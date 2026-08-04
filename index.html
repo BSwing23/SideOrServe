@@ -3658,10 +3658,30 @@
             if (serverKey === 'you' || serverKey === 'partner') {
                 matchState.currentServer = serverKey;
                 matchState.servingTeam = 'our';
+                matchSetup.yourTeamServer = serverKey;
+                needsYourTeamFirstServer = false;
             } else {
                 matchState.currentServer = serverKey;
                 matchState.servingTeam = 'their';
+                matchSetup.opponentServer = serverKey === 'opp1' ? 'opponent1' : 'opponent2';
+                needsTheirTeamFirstServer = false;
             }
+            needsInitialServerSelection = false;
+
+            // Rebuild the 4-person serving rotation now that both teams' first servers
+            // are known — without this, the next sideout indexes into an empty
+            // serverRotation array, which corrupts matchState.currentServer to undefined
+            // and throws "Match not properly initialized" on the following point.
+            if (matchSetup.yourTeamServer && matchSetup.opponentServer) {
+                const yourFirstServer = matchSetup.yourTeamServer;
+                const yourSecondServer = yourFirstServer === 'you' ? 'partner' : 'you';
+                const oppFirstServer = matchSetup.opponentServer === 'opponent1' ? 'opp1' : 'opp2';
+                const oppSecondServer = oppFirstServer === 'opp1' ? 'opp2' : 'opp1';
+                matchState.serverRotation = matchSetup.servingTeam === 'your'
+                    ? [yourFirstServer, oppFirstServer, yourSecondServer, oppSecondServer]
+                    : [oppFirstServer, yourFirstServer, oppSecondServer, yourSecondServer];
+            }
+
             const overlay = document.getElementById('fixServerOverlay');
             if (overlay) overlay.remove();
             updateMatchDisplay();
