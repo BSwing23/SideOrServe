@@ -714,17 +714,7 @@
         <button class="btn btn-secondary btn-small" onclick="detectVenueByGPS()" style="width: 100%; margin-bottom: 20px;">
             📍 Detect My Location
         </button>
-        
-        <div class="form-group">
-            <label for="quickCoinTossOrientation">Court Orientation:</label>
-            <select id="quickCoinTossOrientation" onchange="updateQuickCoinToss()">
-                <option value="North-South">North-South</option>
-                <option value="East-West">East-West</option>
-                <option value="Northeast-Southwest">Northeast-Southwest</option>
-                <option value="Northwest-Southeast">Northwest-Southeast</option>
-            </select>
-        </div>
-        
+
         <div id="quickCoinTossContent">
             <p style="text-align: center; opacity: 0.7; padding: 40px 0;">Select a venue to see coin toss recommendations</p>
         </div>
@@ -1741,7 +1731,8 @@
             }
             content.innerHTML = '<p style="text-align:center;opacity:0.7;padding:20px 0;">Loading recommendation…</p>';
 
-            const orientation = document.getElementById('quickCoinTossOrientation').value;
+            // Orientation is already known from the venue itself — no need to ask again.
+            const orientation = quickToolVenue.orientation || 'North-South';
             const sides = orientation.split('-');
             const windAnalysis = calculateWindDirection(quickToolWeatherData.windDegrees, orientation);
             const beaufortLevel = getBeaufortLevel(quickToolWeatherData.windSpeed);
@@ -2495,16 +2486,6 @@
             showProfileSetup();
         }
 
-        // Venue & Side Management
-        function coinTossTabVenueChanged() {
-            const venueId = document.getElementById('coinTossTabVenue')?.value;
-            if (venueId && venues[venueId]) {
-                const orientation = venues[venueId].orientation || 'North-South';
-                const sel = document.getElementById('coinTossTabOrientation');
-                if (sel) sel.value = orientation;
-            }
-        }
-        
         function weatherTabVenueChanged() {
             const venueId = document.getElementById('weatherTabVenue')?.value;
             if (venueId && venues[venueId]?.orientation) {
@@ -2664,7 +2645,6 @@
 
         async function fetchCoinTossForTab() {
             const venueId = document.getElementById('coinTossTabVenue')?.value;
-            const orientation = document.getElementById('coinTossTabOrientation')?.value || 'North-South';
             const resultDiv = document.getElementById('coinTossTabResult');
             if (!venueId || !venues[venueId]) {
                 if (resultDiv) resultDiv.innerHTML = '<p style="color:rgba(220,80,80,0.9);font-size:0.9em;">Please select a venue first.</p>';
@@ -2673,6 +2653,8 @@
             if (resultDiv) resultDiv.innerHTML = '<p style="opacity:0.7;font-size:0.9em;">Fetching weather...</p>';
             try {
                 const venue = venues[venueId];
+                // Orientation is already known from the venue itself — no need to ask again.
+                const orientation = venue.orientation || 'North-South';
                 const weatherData = await fetchWeather(venue, orientation);
                 if (!weatherData) throw new Error('No data');
                 matchSetup.weather = weatherData;
@@ -8365,18 +8347,9 @@
                         <div style="font-size:0.9em;opacity:0.8;margin-bottom:14px;">${strategies.message || 'Select a venue to get current weather and coin toss recommendations.'}</div>
                         <div style="margin-bottom:12px;">
                             <label style="display:block;margin-bottom:6px;font-size:0.9em;opacity:0.8;">Select Venue:</label>
-                            <select id="coinTossTabVenue" onchange="coinTossTabVenueChanged()" style="width:100%;padding:8px;border-radius:6px;background:rgba(255,255,255,0.1);color:white;border:1px solid rgba(255,255,255,0.3);font-size:0.95em;">
+                            <select id="coinTossTabVenue" style="width:100%;padding:8px;border-radius:6px;background:rgba(255,255,255,0.1);color:white;border:1px solid rgba(255,255,255,0.3);font-size:0.95em;">
                                 <option value="">-- Select Venue --</option>
                                 ${venueOptions}
-                            </select>
-                        </div>
-                        <div style="margin-bottom:12px;">
-                            <label style="display:block;margin-bottom:6px;font-size:0.9em;opacity:0.8;">Court Orientation:</label>
-                            <select id="coinTossTabOrientation" style="width:100%;padding:8px;border-radius:6px;background:rgba(255,255,255,0.1);color:white;border:1px solid rgba(255,255,255,0.3);font-size:0.95em;">
-                                <option value="North-South">North-South</option>
-                                <option value="East-West">East-West</option>
-                                <option value="Northeast-Southwest">Northeast-Southwest</option>
-                                <option value="Northwest-Southeast">Northwest-Southeast</option>
                             </select>
                         </div>
                         <button class="btn btn-primary" onclick="fetchCoinTossForTab()" style="width:100%;">Get Recommendation</button>
@@ -8385,14 +8358,6 @@
                 if (matchSetup.venue) {
                     const sel = document.getElementById('coinTossTabVenue');
                     if (sel) sel.value = matchSetup.venue;
-                }
-                // Always set orientation from matchSetup or from the venue definition
-                const orientationSel = document.getElementById('coinTossTabOrientation');
-                if (orientationSel) {
-                    const orientation = matchSetup.orientation || 
-                        (matchSetup.venue && venues[matchSetup.venue]?.orientation) || 
-                        'North-South';
-                    orientationSel.value = orientation;
                 }
                 return;
             }
