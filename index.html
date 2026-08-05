@@ -1730,73 +1730,86 @@
             document.getElementById('quickWeatherContent').innerHTML = html;
         }
         
-        function updateQuickCoinToss() {
-            if (!quickToolWeatherData) return;
-            
+        async function updateQuickCoinToss() {
+            const content = document.getElementById('quickCoinTossContent');
+            if (!quickToolWeatherData) {
+                // Weather fetch is still in flight (or hasn't started) — show a loading
+                // state instead of silently no-op-ing. quickCoinTossVenueChanged() calls
+                // this function again once quickToolWeatherData resolves.
+                content.innerHTML = '<p style="text-align:center;opacity:0.7;padding:40px 0;">Loading weather…</p>';
+                return;
+            }
+            content.innerHTML = '<p style="text-align:center;opacity:0.7;padding:20px 0;">Loading recommendation…</p>';
+
             const orientation = document.getElementById('quickCoinTossOrientation').value;
+            const sides = orientation.split('-');
             const windAnalysis = calculateWindDirection(quickToolWeatherData.windDegrees, orientation);
             const beaufortLevel = getBeaufortLevel(quickToolWeatherData.windSpeed);
-            const beaufortInfo = beaufortData[beaufortLevel];
-            
+
+            // Same synthesis engine the live in-match Coin Toss tab uses — fed from
+            // historical P7 data for this venue instead of live matchState.
+            const venueKey = document.getElementById('quickCoinTossVenue')?.value || null;
+            const historicalP7Data = venueKey ? await calculateHistoricalP7StatsForVenue(venueKey) : { hasData: false };
+            const strategies = calculateCoinTossStrategies(venueKey, {
+                historicalP7Data,
+                side1Name: sides[0],
+                side2Name: sides[1],
+                swingleScale: beaufortLevel
+            });
+
+            const windNote = windAnalysis.crosswind
+                ? `Crosswind at ${quickToolWeatherData.windSpeed} mph — floats and high sets will drift; neither side has a tailwind edge.`
+                : `Tailwind favors the ${windAnalysis.tailwindSide} side at ${quickToolWeatherData.windSpeed} mph.`;
+
             let html = `
                 <div class="stat-box">
                     <h3>🎯 COIN TOSS RECOMMENDATION</h3>
                     <div style="font-size: 0.9em; margin-bottom: 20px; opacity: 0.9;">
-                        Based on current conditions at ${quickToolVenue.name}
+                        ${quickToolVenue.name} — ${quickToolWeatherData.windSpeed} mph from ${quickToolWeatherData.windDirection} (Swingle Scale ${beaufortLevel})
                     </div>
             `;
-            
-            if (beaufortLevel >= 3 && !windAnalysis.crosswind) {
-                html += `
-                    <div style="background: rgba(152,30,50,0.3); padding: 20px; border-radius: 10px; text-align: center; margin-bottom: 20px;">
-                        <div style="font-size: 2em; font-weight: bold; margin: 15px 0; color: white;">
-                            CHOOSE ${windAnalysis.tailwindSide.toUpperCase()} SIDE
-                        </div>
-                        <div style="font-size: 1.1em; margin-bottom: 15px;">
-                            <strong>Wind: ${quickToolWeatherData.windSpeed} mph from ${quickToolWeatherData.windDirection}</strong> (Swingle Scale ${beaufortLevel})
-                        </div>
-                    </div>
-                `;
-            } else if (windAnalysis.crosswind) {
-                const qtCrosswindNote = beaufortLevel >= 4 ?
-                    `${quickToolWeatherData.windSpeed} mph crosswind will significantly affect play — float serves and high sets will drift. Neither side has a tailwind advantage.` :
-                    beaufortLevel >= 3 ?
-                    `Crosswind at ${quickToolWeatherData.windSpeed} mph — noticeable on float serves and high balls.` :
-                    `Light crosswind — minimal effect on play.`;
+
+            if (strategies.noData) {
                 html += `
                     <div style="background: rgba(152,30,50,0.3); padding: 20px; border-radius: 10px; text-align: center; margin-bottom: 20px;">
                         <div style="font-size: 2em; font-weight: bold; margin: 15px 0; color: white;">
                             CHOOSE RECEIVE FIRST
                         </div>
-                        <div style="font-size: 1.1em; margin-bottom: 15px;">
-                            <strong>Crosswind: ${quickToolWeatherData.windSpeed} mph (Swingle Scale ${beaufortLevel})</strong>
-                        </div>
                         <div style="font-size: 0.95em;">
-                            ${qtCrosswindNote}<br>
-                            Take the receiving advantage. Choose side by sun or court familiarity.
+                            ${strategies.message}<br>${windNote}
                         </div>
                     </div>
                 `;
             } else {
+                const heroSide = strategies.winToss.recommendation.toLowerCase().includes('side')
+                    ? `CHOOSE ${strategies.winToss.recommendation.toUpperCase()}`
+                    : 'CHOOSE RECEIVE FIRST';
                 html += `
-                    <div style="background: rgba(152,30,50,0.3); padding: 20px; border-radius: 10px; text-align: center; margin-bottom: 20px;">
-                        <div style="font-size: 2em; font-weight: bold; margin: 15px 0; color: white;">
-                            CHOOSE RECEIVE FIRST
+                    <div style="background: rgba(152,30,50,0.3); padding: 20px; border-radius: 10px; text-align: center; margin-bottom: 16px;">
+                        <div style="font-size: 1.8em; font-weight: bold; margin: 10px 0; color: white;">
+                            ${heroSide}
                         </div>
-                        <div style="font-size: 1.1em; margin-bottom: 15px;">
-                            <strong>Minimal wind impact</strong>
+                        <div style="font-size: 0.95em; margin-bottom: 8px;">${strategies.winToss.reasoning}</div>
+                        <div style="font-size: 0.85em; opacity: 0.8;">${strategies.winToss.details}</div>
+                        <div style="font-size: 0.85em; opacity: 0.8; margin-top: 8px;">${windNote}</div>
+                    </div>
+                    <div style="display:flex; justify-content:space-between; gap:10px; margin-bottom:12px;">
+                        <div style="flex:1; text-align:center; background:rgba(255,255,255,0.05); border-radius:8px; padding:10px;">
+                            <div style="font-size:0.72em; opacity:0.6; text-transform:uppercase;">Net Side Advantage</div>
+                            <div style="font-size:1.2em; font-weight:bold;">${strategies.sideAdvantagePoints.toFixed(1)} pts</div>
                         </div>
-                        <div style="font-size: 0.95em;">
-                            Wind will not significantly affect play.<br>
-                            Take the receiving advantage.
+                        <div style="flex:1; text-align:center; background:rgba(255,255,255,0.05); border-radius:8px; padding:10px;">
+                            <div style="font-size:0.72em; opacity:0.6; text-transform:uppercase;">Receive-First Advantage</div>
+                            <div style="font-size:1.2em; font-weight:bold;">${strategies.receiveAdvantagePoints.toFixed(1)} pts</div>
                         </div>
                     </div>
+                    ${historicalP7Data.hasData ? `<div style="font-size:0.78em; opacity:0.55; text-align:center;">Based on ${historicalP7Data.side1Segments + historicalP7Data.side2Segments} historical segment(s) at this venue.</div>` : ''}
                 `;
             }
-            
+
             html += `</div>`;
-            
-            document.getElementById('quickCoinTossContent').innerHTML = html;
+
+            content.innerHTML = html;
         }
         
         function displayQuickStats() {
@@ -2667,7 +2680,7 @@
                 matchSetup.venueName = venue.name;
                 // Re-render into whichever container holds this form (setup tab or live match tab)
                 const _container = resultDiv?.closest('#setupCoinTossContent') || null;
-                updateCoinTossDisplay(_container);
+                updateCoinTossDisplay(_container, venueId);
             } catch(e) {
                 if (resultDiv) resultDiv.innerHTML = '<p style="color:rgba(220,80,80,0.9);font-size:0.9em;">Weather fetch failed — check connection and try again.</p>';
             }
@@ -8317,20 +8330,39 @@
             }
         }
 
-        function updateCoinTossDisplay(targetEl) {
+        async function updateCoinTossDisplay(targetEl, explicitVenueId) {
             const content = targetEl || document.getElementById('coinTossContent');
-            
+
+            // Pre-match fallback: if there's no live P7 data yet, use historical data for
+            // the configured venue so this shows a real recommendation instead of just a
+            // venue picker. Live in-match behavior is untouched — calculateP7Stats().hasData
+            // is true there, so preMatch never gets built and calculateCoinTossStrategies()
+            // takes the exact same path it always has.
+            const venueId = explicitVenueId || matchSetup.venue || null;
+            let preMatch = null;
+            if (!calculateP7Stats().hasData && venueId) {
+                const orientation = matchSetup.orientation || venues[venueId]?.orientation || 'North-South';
+                const sides = orientation.split('-');
+                const historicalP7Data = await calculateHistoricalP7StatsForVenue(venueId);
+                preMatch = {
+                    historicalP7Data,
+                    side1Name: sides[0],
+                    side2Name: sides[1],
+                    swingleScale: matchSetup.weather?.beaufortForce ?? 0
+                };
+            }
+
             // Calculate optimal strategies
-            const strategies = calculateCoinTossStrategies();
-            
+            const strategies = calculateCoinTossStrategies(venueId, preMatch);
+
             if (strategies.noData) {
                 // No match data — show standalone venue/weather picker
-                const venueOptions = Object.entries(venues).map(([k,v]) => 
+                const venueOptions = Object.entries(venues).map(([k,v]) =>
                     `<option value="${k}">${v.name}</option>`).join('');
                 content.innerHTML = `
                     <div class="stat-box">
                         <h3>🎯 COIN TOSS OPTIMIZER</h3>
-                        <div style="font-size:0.9em;opacity:0.8;margin-bottom:14px;">Select a venue to get current weather and coin toss recommendations.</div>
+                        <div style="font-size:0.9em;opacity:0.8;margin-bottom:14px;">${strategies.message || 'Select a venue to get current weather and coin toss recommendations.'}</div>
                         <div style="margin-bottom:12px;">
                             <label style="display:block;margin-bottom:6px;font-size:0.9em;opacity:0.8;">Select Venue:</label>
                             <select id="coinTossTabVenue" onchange="coinTossTabVenueChanged()" style="width:100%;padding:8px;border-radius:6px;background:rgba(255,255,255,0.1);color:white;border:1px solid rgba(255,255,255,0.3);font-size:0.95em;">
@@ -9360,27 +9392,51 @@
             };
         }
         
-        function calculateCoinTossStrategies() {
-            // Calculate P7 (Points Per 7) for each side
-            const p7Data = calculateP7Stats();
-            
+        // venueId + preMatch are optional. They exist so pre-match tools (Quick Tools'
+        // Coin Toss calculator, Match Setup's Coin Toss tab) can get a real recommendation
+        // from historical venue data before any live match/P7 data exists — same synthesis
+        // math as the live path, just fed from calculateHistoricalP7StatsForVenue() instead
+        // of matchState. preMatch shape: { historicalP7Data, side1Name, side2Name, swingleScale }.
+        function calculateCoinTossStrategies(venueId = null, preMatch = null) {
+            // Calculate P7 (Points Per 7) for each side — prefer live match data;
+            // fall back to historical venue data when there's no live match yet.
+            let p7Data = calculateP7Stats();
+            let usingHistorical = false;
+
+            if (!p7Data.hasData && venueId && preMatch?.historicalP7Data?.hasData) {
+                p7Data = preMatch.historicalP7Data;
+                usingHistorical = true;
+            }
+
             if (!p7Data.hasData) {
                 return {
                     noData: true,
-                    message: "Not enough data yet. Play at least one complete segment (7 points) to see coin toss analysis."
+                    message: venueId
+                        ? "No historical data yet for this venue — play a few sets here first."
+                        : "Not enough data yet. Play at least one complete segment (7 points) to see coin toss analysis."
                 };
             }
-            
-            // If we're between sets, use context from most recent completed set
+
+            // If we're between sets, use context from most recent completed set.
+            // In historical mode there's no live match — build a synthetic context from
+            // the venue's orientation so the exact same synthesis math below still applies.
             let contextState = matchState;
-            if (matchScore.setsCompleted.length > 0) {
+            if (usingHistorical) {
+                contextState = {
+                    side1Name: preMatch.side1Name,
+                    side2Name: preMatch.side2Name,
+                    gameType: 'normal',
+                    switchInterval: 7
+                };
+            } else if (matchScore.setsCompleted.length > 0) {
                 const lastCompletedSet = matchScore.setsCompleted[matchScore.setsCompleted.length - 1];
                 contextState = lastCompletedSet.matchState;
             }
-            
+
             // isDeciding: check live context AND current setup selection.
             // At coin-toss time before Set 3 starts, contextState is still from Set 2 ('regular').
-            const isDeciding = contextState.gameType === 'deciding' || matchSetup?.gameType === 'deciding';
+            // Historical/pre-match mode is always for a fresh Set 1 — never a deciding set.
+            const isDeciding = !usingHistorical && (contextState.gameType === 'deciding' || matchSetup?.gameType === 'deciding');
             // Deciding sets switch every 5 points, not 7.
             // switchInterval MUST be 5 when isDeciding so that P5-scaled diffs compute
             // the correct per-point rate inside calculateNetSideAdvantage:
@@ -9495,9 +9551,9 @@
             // CHOOSE SIDE when observed net side advantage in points exceeds receive advantage
             // in points AND Swingle Scale >= 4 (13+ mph). Both conditions required per GASA
             // framework. At Swingle < 4 receive first is always correct regardless of P7 data.
-            const currentSwingle = matchState.weatherAtSetStart?.swingleScale
-                ?? matchSetup.weather?.beaufortForce
-                ?? 0;
+            const currentSwingle = usingHistorical
+                ? (preMatch.swingleScale ?? 0)
+                : (matchState.weatherAtSetStart?.swingleScale ?? matchSetup.weather?.beaufortForce ?? 0);
             const recommendSide = receiveAdv !== null
                 && sideAdvantagePoints > receiveAdvantagePoints
                 && currentSwingle >= 4;
@@ -9579,47 +9635,20 @@
             };
         }
         
-        function calculateP7Stats() {
-            // If we're between sets, aggregate P7 data from ALL completed sets
-            let side1Stats, side2Stats;
-            
-            if (matchScore.setsCompleted.length > 0) {
-                // Aggregate data from ALL completed sets
-                side1Stats = { our: [], their: [] };
-                side2Stats = { our: [], their: [] };
-                
-                matchScore.setsCompleted.forEach((set, index) => {
-                    const setP7 = set.matchState.p7Stats;
-                    side1Stats.our = side1Stats.our.concat(setP7.side1.our);
-                    side1Stats.their = side1Stats.their.concat(setP7.side1.their);
-                    side2Stats.our = side2Stats.our.concat(setP7.side2.our);
-                    side2Stats.their = side2Stats.their.concat(setP7.side2.their);
-                    console.log(`[COIN TOSS] Added Set ${set.setNumber} data`);
-                });
-                
-                console.log('[COIN TOSS] Using aggregated data from', matchScore.setsCompleted.length, 'completed set(s)');
-            } else {
-                // Use current match state (during active set)
-                if (!matchState.p7Stats) {
-                    side1Stats = { our: [], their: [] };
-                    side2Stats = { our: [], their: [] };
-                } else {
-                    side1Stats = matchState.p7Stats.side1;
-                    side2Stats = matchState.p7Stats.side2;
-                }
-                console.log('[COIN TOSS] Using current match state');
-            }
-            
+        // Shared by calculateP7Stats() (live) and calculateHistoricalP7StatsForVenue()
+        // (pre-match) — same averaging/differential math, different data source feeding
+        // in the raw side1Stats/side2Stats arrays.
+        function computeP7StatsFromSides(side1Stats, side2Stats) {
             console.log('[COIN TOSS] Checking P7 stats...');
             console.log('[COIN TOSS] side1Stats:', side1Stats);
             console.log('[COIN TOSS] side2Stats:', side2Stats);
-            
+
             // Need at least one complete segment to calculate
             if (side1Stats.our.length === 0 && side2Stats.our.length === 0) {
                 console.log('[COIN TOSS] No data found - returning hasData: false');
                 return { hasData: false };
             }
-            
+
             // Calculate averages
             const avgOurSide1 = side1Stats.our.length > 0 ?
                 side1Stats.our.reduce((a,b) => a+b, 0) / side1Stats.our.length : 0;
@@ -9629,17 +9658,17 @@
                 side2Stats.our.reduce((a,b) => a+b, 0) / side2Stats.our.length : 0;
             const avgTheirSide2 = side2Stats.their.length > 0 ?
                 side2Stats.their.reduce((a,b) => a+b, 0) / side2Stats.their.length : 0;
-            
+
             // P7 differential (your P7 - their P7)
             const p7DiffSide1 = avgOurSide1 - avgTheirSide1;
             const p7DiffSide2 = avgOurSide2 - avgTheirSide2;
-            
+
             console.log('[COIN TOSS] Calculated P7 data:', {
                 avgOurSide1, avgTheirSide1, avgOurSide2, avgTheirSide2,
                 p7DiffSide1, p7DiffSide2,
                 totalSegments: side1Stats.our.length + side2Stats.our.length
             });
-            
+
             return {
                 hasData: true,
                 avgOurSide1: avgOurSide1,
@@ -9652,7 +9681,78 @@
                 side2Segments: side2Stats.our.length
             };
         }
-        
+
+        function calculateP7Stats() {
+            // If we're between sets, aggregate P7 data from ALL completed sets
+            let side1Stats, side2Stats;
+
+            if (matchScore.setsCompleted.length > 0) {
+                // Aggregate data from ALL completed sets
+                side1Stats = { our: [], their: [] };
+                side2Stats = { our: [], their: [] };
+
+                matchScore.setsCompleted.forEach((set, index) => {
+                    const setP7 = set.matchState.p7Stats;
+                    side1Stats.our = side1Stats.our.concat(setP7.side1.our);
+                    side1Stats.their = side1Stats.their.concat(setP7.side1.their);
+                    side2Stats.our = side2Stats.our.concat(setP7.side2.our);
+                    side2Stats.their = side2Stats.their.concat(setP7.side2.their);
+                    console.log(`[COIN TOSS] Added Set ${set.setNumber} data`);
+                });
+
+                console.log('[COIN TOSS] Using aggregated data from', matchScore.setsCompleted.length, 'completed set(s)');
+            } else {
+                // Use current match state (during active set)
+                if (!matchState.p7Stats) {
+                    side1Stats = { our: [], their: [] };
+                    side2Stats = { our: [], their: [] };
+                } else {
+                    side1Stats = matchState.p7Stats.side1;
+                    side2Stats = matchState.p7Stats.side2;
+                }
+                console.log('[COIN TOSS] Using current match state');
+            }
+
+            return computeP7StatsFromSides(side1Stats, side2Stats);
+        }
+
+        // Historical counterpart to calculateP7Stats() for pre-match tools — aggregates
+        // p7Stats.side1/side2 from completed `sets` docs at a specific venue, using the
+        // exact same computeP7StatsFromSides() math as the live path. Filters mirror the
+        // explicit currentTierFilter/currentVenueFilter pattern used elsewhere (Side
+        // Advantage, Server Performance) — deliberately does NOT use matchSetup.competitionTier,
+        // which is scoped to whatever match is currently being configured, not this query.
+        async function calculateHistoricalP7StatsForVenue(venueId, competitive = true) {
+            if (!currentUser || !venueId) return { hasData: false };
+            try {
+                const snapshot = await db.collection('sets')
+                    .where('userId', '==', currentUser.uid)
+                    .limit(500).get();
+
+                const side1Stats = { our: [], their: [] };
+                const side2Stats = { our: [], their: [] };
+
+                snapshot.docs.forEach(doc => {
+                    const d = doc.data();
+                    if (!d.complete) return;
+                    if (d.includedInStats === false) return;
+                    if (d.venueId !== venueId) return;
+                    if (competitive && !isCompetitiveSet(d.ourScore, d.theirScore, d.gameType === 'deciding' ? 15 : 21)) return;
+                    const p7 = d.p7Stats;
+                    if (!p7?.side1 || !p7?.side2) return;
+                    side1Stats.our   = side1Stats.our.concat(p7.side1.our   || []);
+                    side1Stats.their = side1Stats.their.concat(p7.side1.their || []);
+                    side2Stats.our   = side2Stats.our.concat(p7.side2.our   || []);
+                    side2Stats.their = side2Stats.their.concat(p7.side2.their || []);
+                });
+
+                return computeP7StatsFromSides(side1Stats, side2Stats);
+            } catch(e) {
+                console.error('[COIN TOSS] Historical P7 query error:', e);
+                return { hasData: false };
+            }
+        }
+
         function calculateNetSideAdvantage(startingSide, p7DiffSide1, p7DiffSide2, projectedTotal, switchInterval, contextState) {
             // Strict mechanical exposure weighting.
             // Full segments: each switchInterval points = one segment on alternating sides.
