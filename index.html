@@ -4039,11 +4039,15 @@
                 matchScore.theirSetsWon++;
             }
 
+            // Best of 3 — decided once either team reaches 2 set wins
+            const matchIsComplete = (matchScore.yourSetsWon === 2 || matchScore.theirSetsWon === 2);
+
             // AUTO-SAVE: finalize set doc first so we get its ID, then push to setsCompleted
             // IMPORTANT: saveSetToFirestore(true) runs BEFORE updateRPStats so that the set
             // document always captures the final scores even if RP aggregation throws.
             try {
                 await saveSetToFirestore(true);   // finalizes set doc → currentSetId is now set
+                console.log('[STALENESS-DEBUG] handleSetComplete: saveSetToFirestore resolved at', new Date().toISOString(), 'currentSetId=', currentSetId);
                 await updateRPStats();
                 const setData = {
                     setNumber: matchScore.currentSetNumber,
@@ -4055,14 +4059,20 @@
                     matchSetup: JSON.parse(JSON.stringify(matchSetup))
                 };
                 matchScore.setsCompleted.push(setData);
-                currentSetId = null;               // reset for next set
+                // Only clear currentSetId if there's a next set coming. When this was the
+                // deciding set, handleMatchComplete()'s final saveMatchToFirestore(true) call
+                // needs currentSetId intact so saveSetToFirestore() updates this same set
+                // document instead of creating a second, duplicate doc for the final set.
+                if (!matchIsComplete) {
+                    currentSetId = null;
+                }
                 await saveMatchHeader(false);      // update match header with new setsCompleted
                 console.log('[AUTO-SAVE] Set saved successfully');
             } catch (err) {
                 console.error('[AUTO-SAVE] Error:', err);
                 alert('⚠️ Save error: ' + err.message + '\n\nYour scoring data is still in memory. Try saving again or continue playing.');
             }
-            
+
             // Show set complete alert
             const _usLabel = [matchSetup.yourName, matchSetup.partnerName].filter(Boolean).join('/') || 'You';
             const _themLabel = [matchSetup.opponent1Name, matchSetup.opponent2Name].filter(Boolean).join('/') || 'Them';
@@ -4071,9 +4081,9 @@
             } else {
                 alert(`Set ${matchScore.currentSetNumber} complete! ${_themLabel} won ${winnerScore}-${loserScore}.\n\nMATCH SCORE: ${_usLabel} ${matchScore.yourSetsWon}-${matchScore.theirSetsWon} ${_themLabel}`);
             }
-            
+
             // Check if match is complete (best of 3)
-            if (matchScore.yourSetsWon === 2 || matchScore.theirSetsWon === 2) {
+            if (matchIsComplete) {
                 handleMatchComplete();
             } else {
                 // Move to next set setup
@@ -4096,6 +4106,7 @@
             try {
                 await saveMatchToFirestore(true);
                 console.log('[MATCH COMPLETE] Final save done');
+                console.log('[STALENESS-DEBUG] handleMatchComplete: saveMatchToFirestore resolved at', new Date().toISOString(), 'currentSetId=', currentSetId);
             } catch (err) {
                 console.error('[MATCH COMPLETE] Final save error:', err);
             }
@@ -6774,6 +6785,13 @@
                 try {
                     const doc = await db.collection('players').doc(currentUser.uid).get();
                     if (doc.exists) userProfile = doc.data();
+                    // TEMP DIAGNOSTIC: All Time RP Averages reads userProfile.rpStats, not a
+                    // live `sets` query — log the counts here to see if this refresh itself
+                    // is stale relative to the "[STALENESS-DEBUG] ... saved at" logs.
+                    const _tier = matchSetup?.competitionTier || 'NCAA_Pro';
+                    const _rp = userProfile?.rpStats?.[_tier] || userProfile?.rpStats;
+                    console.log('[STALENESS-DEBUG] updateDataTab profile refresh resolved at', new Date().toISOString(),
+                        'sets21.count=', _rp?.sets21?.ourTeam?.count, 'sets15.count=', _rp?.sets15?.ourTeam?.count);
                 } catch(e) { console.error('[DATA] Profile refresh error:', e); }
             }
             const filterLabel = document.getElementById('competitiveFilterLabel');
@@ -7635,6 +7653,29 @@
             return total > 0 ? { pct: leaderWon / total * 100, wins: leaderWon, total } : null;
         }
 
+        // ── TEMP DIAGNOSTIC: All Time data staleness investigation ──────────────
+        // Logs when an All Time `sets` query resolves, how many docs came back, and
+        // the most recent 2-3 by createdAt — compare these timestamps against the
+        // "[STALENESS-DEBUG] handleSetComplete/handleMatchComplete saved at" logs to
+        // see the actual gap between "set saved" and "set visible in an All Time query."
+        function _logSetsSnapshotDebug(tag, snapshot) {
+            const docs = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
+            docs.sort((a, b) => {
+                const at = a.createdAt?.toDate ? a.createdAt.toDate().getTime() : 0;
+                const bt = b.createdAt?.toDate ? b.createdAt.toDate().getTime() : 0;
+                return bt - at;
+            });
+            const mostRecent = docs.slice(0, 3).map(d => ({
+                id: d.id,
+                createdAt: d.createdAt?.toDate ? d.createdAt.toDate().toISOString() : null,
+                complete: d.complete,
+                ourScore: d.ourScore,
+                theirScore: d.theirScore
+            }));
+            console.log(`[STALENESS-DEBUG] ${tag} query resolved at`, new Date().toISOString(),
+                'docCount=', snapshot.size, 'mostRecent=', mostRecent);
+        }
+
         async function buildSideAdvantageSection(competitive) {
             if (!currentUser) return '';
             try {
@@ -7644,6 +7685,7 @@
                 const snapshot = await db.collection('sets')
                     .where('userId', '==', currentUser.uid)
                     .limit(500).get();
+                _logSetsSnapshotDebug('buildSideAdvantageSection', snapshot);
 
                 // Group by venue
                 const venueData = {};
@@ -7964,6 +8006,7 @@
                 const snapshot = await db.collection('sets')
                     .where('userId', '==', currentUser.uid)
                     .limit(500).get();
+                _logSetsSnapshotDebug('buildServerPerformanceSection', snapshot);
 
                 const setTypeFilter = currentSetType === '15' ? 'deciding' : 'regular';
                 const playerStats = {};
