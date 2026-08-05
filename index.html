@@ -1639,17 +1639,20 @@
             }
             
             quickToolVenue = venue;
-            
+
+            // Fill in orientation once, if this venue doesn't already have it on file
+            await ensureVenueOrientation(venue, venueKey);
+
             // Fetch weather
             try {
                 const apiKey = '375cb5070a5df8c1cec42204967cfb23';
                 const { lat, lon } = venue.location;
-                
+
                 const response = await fetch(
                     `https://api.openweathermap.org/data/2.5/weather?lat=${lat}&lon=${lon}&appid=${apiKey}&units=imperial`
                 );
                 const data = await response.json();
-                
+
                 quickToolWeatherData = {
                     temp: Math.round(data.main.temp),
                     condition: data.weather[0].main,
@@ -1657,7 +1660,7 @@
                     windDirection: getWindDirection(data.wind.deg),
                     windDegrees: data.wind.deg
                 };
-                
+
                 updateQuickCoinToss();
             } catch (error) {
                 console.error('[QUICK COIN TOSS] Error:', error);
@@ -1998,28 +2001,74 @@
             if (!venueName || venueName.trim() === '') {
                 return;
             }
-            
-            saveCustomVenue(venueName.trim(), lat, lon);
+
+            const orientation = promptForOrientation(venueName.trim());
+            if (!orientation) {
+                alert('Court orientation is required (enter 1-4).');
+                return;
+            }
+
+            saveCustomVenue(venueName.trim(), lat, lon, orientation);
         }
         
+        // Shared orientation prompt — used both when creating a custom venue and when
+        // retrofitting an older custom venue that was saved before orientation was captured.
+        function promptForOrientation(venueName) {
+            const options = ['North-South', 'East-West', 'Northeast-Southwest', 'Northwest-Southeast'];
+            const answer = prompt(
+                `Court orientation at ${venueName}?\n\n1. North-South\n2. East-West\n3. Northeast-Southwest\n4. Northwest-Southeast\n\nEnter 1-4:`,
+                '1'
+            );
+            const idx = parseInt(answer, 10);
+            return (idx >= 1 && idx <= 4) ? options[idx - 1] : null;
+        }
+
+        // Returns venue.orientation if already known. If it's a custom venue missing
+        // orientation, prompts once and persists it to Firestore so it's never asked
+        // again. Builtin venues always have orientation, so this is a no-op for them.
+        async function ensureVenueOrientation(venue, venueKey) {
+            if (venue.orientation) return venue.orientation;
+
+            const orientation = promptForOrientation(venue.name);
+            if (!orientation) return 'North-South';
+
+            if (venueKey && venueKey.startsWith('custom-') && userProfile.customVenues) {
+                venue.orientation = orientation;
+                try {
+                    await db.collection('players').doc(currentUser.uid).update({
+                        customVenues: userProfile.customVenues
+                    });
+                } catch (error) {
+                    console.error('[VENUE ORIENTATION] Save error:', error);
+                }
+            }
+            return orientation;
+        }
+
         function showAddCustomVenue() {
             const venueName = prompt('Enter venue name:', '');
             if (!venueName || venueName.trim() === '') {
                 return;
             }
-            
+
             const lat = prompt('Enter latitude:', '');
             const lon = prompt('Enter longitude:', '');
-            
+
             if (!lat || !lon) {
                 alert('Latitude and longitude required');
                 return;
             }
-            
-            saveCustomVenue(venueName.trim(), parseFloat(lat), parseFloat(lon));
+
+            const orientation = promptForOrientation(venueName.trim());
+            if (!orientation) {
+                alert('Court orientation is required (enter 1-4).');
+                return;
+            }
+
+            saveCustomVenue(venueName.trim(), parseFloat(lat), parseFloat(lon), orientation);
         }
-        
-        async function saveCustomVenue(name, lat, lon) {
+
+        async function saveCustomVenue(name, lat, lon, orientation) {
             try {
                 // Check for duplicates
                 if (userProfile.customVenues) {
@@ -2029,12 +2078,13 @@
                         return;
                     }
                 }
-                
+
                 const customVenue = {
                     name: name,
-                    location: { lat, lon }
+                    location: { lat, lon },
+                    orientation: orientation || 'North-South'
                 };
-                
+
                 // Add to user profile
                 const customVenues = userProfile.customVenues || [];
                 customVenues.push(customVenue);
@@ -2967,9 +3017,9 @@
             return impacts[beaufort.impact] || impacts['none'];
         }
 
-        function venueChanged() {
+        async function venueChanged() {
             const venueId = document.getElementById('venueName').value;
-            
+
             // Handle special options
             if (venueId === 'gps-detect') {
                 detectVenueByGPS();
@@ -2977,14 +3027,14 @@
                 document.getElementById('venueName').value = localStorage.getItem('gasaBeach_lastVenue') || 'bear-down-beach';
                 return;
             }
-            
+
             if (venueId === 'custom-new') {
                 showAddCustomVenue();
                 // Reset to default
                 document.getElementById('venueName').value = localStorage.getItem('gasaBeach_lastVenue') || 'bear-down-beach';
                 return;
             }
-            
+
             // Get venue (built-in or custom)
             let venue;
             if (venueId.startsWith('custom-')) {
@@ -2993,12 +3043,12 @@
             } else {
                 venue = venues[venueId];
             }
-            
+
             if (venue) {
                 matchSetup.venue = venueId;
                 matchSetup.venueName = venue.name;
-                matchSetup.orientation = venue.orientation || 'North-South';
-                
+                matchSetup.orientation = await ensureVenueOrientation(venue, venueId);
+
                 // Remember for next time
                 localStorage.setItem('gasaBeach_lastVenue', venueId);
                 localStorage.setItem('gasaBeach_lastVenueName', venue.name);
