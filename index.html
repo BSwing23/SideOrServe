@@ -3749,6 +3749,7 @@
                 snap.docs.forEach(doc => {
                     const d = doc.data();
                     if (!d.complete || !d.serverStats) return;
+                    if (d.includedInStats === false) return;
                     const _faTier = matchSetup.competitionTier;
                     if (_faTier && d.competitionTier !== _faTier) return;
                     ['you', 'partner', 'opp1', 'opp2'].forEach(key => {
@@ -5971,12 +5972,24 @@
             try {
                 const userMatchesRef = db.collection('players').doc(currentUser.uid).collection('matches');
                 const allUserMatches = await userMatchesRef.get();
-                
+
                 // Soft delete: mark all hidden
                 for (const doc of allUserMatches.docs) {
                     await doc.ref.update({ hiddenByOwner: true });
                 }
-                
+
+                // Exclude every one of this user's own sets from all-time aggregates.
+                // Side Bias, Side Advantage, Server Performance, Score-State Win
+                // Probability, RP Averages, and the historical Coin Toss data all query
+                // the `sets` collection directly — without this, "cleared" practice sets
+                // stayed fully visible in every one of those, even though rpStats reset
+                // to zero. Never hard-delete: the same doc may be shared with a paired
+                // partner via `owners`, so this only hides it from the current user's view.
+                const userSetsSnap = await db.collection('sets').where('userId', '==', currentUser.uid).get();
+                for (const doc of userSetsSnap.docs) {
+                    await doc.ref.update({ includedInStats: false });
+                }
+
                 // Replace entire rpStats with fresh zeros — no partial fields survive
                 const emptySetStats = () => ({
                     ourTeam: { totalRPs: 0, count: 0 },
@@ -6014,7 +6027,7 @@
                 const refreshed = await db.collection('players').doc(currentUser.uid).get();
                 userProfile = refreshed.data();
                 
-                alert(allUserMatches.size + ' matches cleared. All stats reset to zero.');
+                alert(allUserMatches.size + ' matches cleared, ' + userSetsSnap.size + ' sets excluded from stats. All stats reset to zero.');
                 showMatchHistory();
                 
             } catch (error) {
@@ -6867,6 +6880,7 @@
                     snap.docs.forEach(doc => {
                         const d = doc.data();
                         if (!d.complete) return;
+                        if (d.includedInStats === false) return;
                         const _todayTier = matchSetup.competitionTier;
                         if (_todayTier && d.competitionTier !== _todayTier) return;
                         const ts = d.createdAt?.toDate ? d.createdAt.toDate() : new Date(d.createdAt || 0);
@@ -6925,6 +6939,7 @@
                     _vsnap.docs.forEach(doc => {
                         const d = doc.data();
                         if (!d.complete || d.venueId !== currentVenueFilter) return;
+                        if (d.includedInStats === false) return;
                         const _vTier = matchSetup.competitionTier;
                         if (_vTier && d.competitionTier !== _vTier) return;
                         const margin = Math.abs((d.ourScore||0) - (d.theirScore||0));
@@ -7083,7 +7098,7 @@
             html += `<hr style="border-color: rgba(255,255,255,0.1); margin: 15px 0;">`;
 
             // ── SECTION 2: SIDE BIAS (venue-specific) ────────────────────────
-            html += await buildSideBiasSection(competitive);
+            html += await buildSideBiasSection();
 
             html += `<hr style="border-color: rgba(255,255,255,0.1); margin: 15px 0;">`;
 
@@ -7108,7 +7123,7 @@
 
             html += `<hr style="border-color: rgba(255,255,255,0.1); margin: 15px 0;">`;
 
-            // ── SECTION 6: ROLE MATCHUP ──────────────────────────────────────
+            // ── SECTION 6: ROLE BATTLE (matchup PS averages + win% combined) ──
             html += buildRoleMatchupSection(stats, displayState, displaySetup, inMatch);
 
             html += `<hr style="border-color: rgba(255,255,255,0.1); margin: 15px 0;">`;
@@ -7118,27 +7133,17 @@
 
             html += `<hr style="border-color: rgba(255,255,255,0.1); margin: 15px 0;">`;
 
-            // ── SECTION 8: ROLE BATTLE WIN % ─────────────────────────────────
-            html += buildRoleBattleSection(stats);
-
-            html += `<hr style="border-color: rgba(255,255,255,0.1); margin: 15px 0;">`;
-
-            // ── SECTION 9: SERVE/RECEIVE WIN % ───────────────────────────────
+            // ── SECTION 8: SERVE/RECEIVE WIN % ───────────────────────────────
             html += buildServeReceiveSection(stats);
 
             html += `<hr style="border-color: rgba(255,255,255,0.1); margin: 15px 0;">`;
 
-            // ── SECTION 10: COIN TOSS ADVANTAGE ─────────────────────────────
-            html += buildCoinTossAdvantageSection(stats);
-
-            html += `<hr style="border-color: rgba(255,255,255,0.1); margin: 15px 0;">`;
-
-            // ── SECTION 11: SCORE-STATE WIN PROBABILITY ───────────────────────
+            // ── SECTION 9: SCORE-STATE WIN PROBABILITY ───────────────────────
             html += await buildScoreStateWinProbSection();
 
             html += `<hr style="border-color: rgba(255,255,255,0.1); margin: 15px 0;">`;
 
-            // ── SECTION 12: SCORE-STATE WIN PROBABILITY — 15-POINT SETS ─────
+            // ── SECTION 10: SCORE-STATE WIN PROBABILITY — 15-POINT SETS ─────
             html += await buildScoreStateWinProb15Section();
 
             if (!html) {
@@ -7191,7 +7196,38 @@
                     </div>`;
             }
 
-            // 2. Better side this match / all-time
+            // 1b. All-time serve/receive record + reset control — merged in from the
+            // former standalone "Coin Toss Advantage" section. Same Real Points to Win /
+            // receive vs serve math as coinTossBlock above, just with the fuller
+            // all-time record and reset button attached. Only meaningful once there's
+            // all-time data to look back on.
+            // Uses servedFirst/receivedFirst (won/total) — NOT servingTeamWins/
+            // receivingTeamWins, which track whichever team happened to serve first
+            // winning (regardless of which team that was), not your team's own
+            // serve-first vs receive-first record.
+            let recordBlock = '';
+            if ((currentDataScope === 'today' || currentDataScope === 'allTime') && st) {
+                const sWins = st.servedFirst?.won || 0;
+                const sTotal = st.servedFirst?.total || 0;
+                const rWins = st.receivedFirst?.won || 0;
+                const rTotal = st.receivedFirst?.total || 0;
+                const totalSR = sTotal + rTotal;
+                if (totalSR > 0) {
+                    const sRecord = sTotal > 0 ? (sWins / sTotal * 100).toFixed(1) : '—';
+                    const rRecord = rTotal > 0 ? (rWins / rTotal * 100).toFixed(1) : '—';
+                    recordBlock = `
+                        <div style="background:rgba(255,255,255,0.10);border-radius:6px;margin-bottom:4px;padding:8px 10px;">
+                            <div style="font-size:0.9em;">
+                                Your record — Receiving: ${rWins}/${rTotal}W (${rRecord}%) &nbsp;|&nbsp; Serving: ${sWins}/${sTotal}W (${sRecord}%)
+                            </div>
+                            ${sampleDisclaimer(totalSR)}
+                            <button onclick="confirmResetStats()" style="margin-top:8px;width:100%;padding:6px;background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.2);border-radius:6px;color:white;font-size:0.8em;cursor:pointer;">Reset All-Time Stats</button>
+                        </div>`;
+                }
+            }
+
+            // 2. Better side this match (live scope only — all-time version removed,
+            // now covered by the venue-specific Side Bias section)
             if (inMatch && displayState && (currentDataScope === 'thisSet' || currentDataScope === 'thisMatch')) {
                 const s1 = displayState.side1Name, s2 = displayState.side2Name;
                 const s1pts = displayState.side1Score || 0, s2pts = displayState.side2Score || 0;
@@ -7201,23 +7237,6 @@
                     const total = s1pts + s2pts;
                     const pct = (diff / total * 100).toFixed(1);
                     lines.push({ icon: '📐', label: 'Better side this match', value: `${better} (+${pct}% raw)`, subtext: gasaPct !== null ? `Real SoS Advantage: +${gasaPct}% (adjusted for partial segments — points played on a side before it was cut short by a switch or set end)` : null, highlight: false });
-                }
-            } else if (currentDataScope === 'allTime' && currentVenueFilter === 'all') {
-                // Compass data mixed across venues — aggregate is meaningless
-                lines.push({ icon: '📐', label: 'Better side all-time', value: 'Select specific venue ↑', highlight: false });
-            } else if (stats?.sidePoints) {
-                const sp = stats.sidePoints;
-                const pairs = [['north','south'],['east','west'],['northeast','southwest'],['northwest','southeast']];
-                for (const [a, b] of pairs) {
-                    const aV = sp[a] || 0, bV = sp[b] || 0;
-                    if (aV + bV > 0) {
-                        const better = aV >= bV ? a : b;
-                        const diff = Math.abs(aV - bV);
-                        const total = aV + bV;
-                        const pct = (diff / total * 100).toFixed(1);
-                        lines.push({ icon: '📐', label: 'Better side all-time', value: `${better.charAt(0).toUpperCase()+better.slice(1)} (+${pct}% raw)`, subtext: gasaPct !== null ? `Real SoS Advantage: +${gasaPct}% (adjusted for partial segments — points played on a side before it was cut short by a switch or set end)` : null, highlight: false });
-                        break;
-                    }
                 }
             }
 
@@ -7233,6 +7252,7 @@
             return `<div class="stat-box" style="border-left-color:rgba(255,255,255,0.5);margin-bottom:4px;">
                 <h3>⚡ COIN TOSS DATA</h3>
                 ${coinTossBlock}
+                ${recordBlock}
                 ${rows}
             </div>`;
         }
@@ -7366,60 +7386,6 @@
             const at15 = { count:s15.ourTeam.count, ourRPs:s15.ourTeam.totalRPs, oppRPs:s15.opponents.totalRPs, winRPs:s15.winners.totalRPs, winCount:s15.winners.count, loseRPs:s15.losers.totalRPs, loseCount:s15.losers.count };
             return tableFromSets(at21, at15, 'All Time');
         }
-        function buildCoinTossAdvantageSection(stats) {
-            // Only meaningful for today/allTime — not for single set/match
-            if (currentDataScope === 'thisSet' || currentDataScope === 'thisMatch') return '';
-            if (!stats) return '';
-            
-            function calcAdvantage(setStats, label, switchInterval) {
-                const hasData = setStats && setStats.losers.count > 0;
-                if (!hasData) return '';
-                const rpsToWin = Math.ceil(setStats.losers.totalRPs / setStats.losers.count) + 1;
-                const usingDefault = false;
-                const totalExpected = 2 * rpsToWin - 1; // receive scenario: W to W-1
-                const totalServe    = 2 * rpsToWin - 2; // serve scenario:    W to W-2
-                const receivePct = (rpsToWin / totalExpected * 100).toFixed(1);
-                const servePct   = (rpsToWin / totalServe   * 100).toFixed(1);
-                const advantage  = (parseFloat(servePct) - parseFloat(receivePct)).toFixed(1);
-                
-                // Serve/receive record
-                const sWins = setStats.servingTeamWins || 0;
-                const rWins = setStats.receivingTeamWins || 0;
-                const total = sWins + rWins;
-                const sRecord = total > 0 ? ` (${(sWins/total*100).toFixed(1)}%)` : '';
-                const rRecord = total > 0 ? ` (${(rWins/total*100).toFixed(1)}%)` : '';
-                
-                return `
-                    <div style="background:rgba(255,255,255,0.04); border-radius:8px; padding:12px; margin-bottom:12px;">
-                        <div style="font-weight:bold; margin-bottom:8px;">${label} — Real Points to Win: <strong>${rpsToWin}</strong></div>
-                        <div style="background:rgba(152,30,50,0.25); border-left:3px solid white; padding:8px 10px; border-radius:5px; margin-bottom:6px;">
-                            <div style="font-weight:bold; color:white; margin-bottom:4px;">✓ RECEIVE FIRST (Recommended)</div>
-                            <div style="font-size:0.9em;">Win at ${rpsToWin}–${rpsToWin-1} &nbsp;→&nbsp; need <strong>${receivePct}%</strong> of RPs</div>
-                        </div>
-                        <div style="padding:8px 10px; border-radius:5px; margin-bottom:6px; opacity:0.85;">
-                            <div style="font-size:0.85em; opacity:0.7; margin-bottom:2px;">SERVE FIRST</div>
-                            <div style="font-size:0.9em;">Win at ${rpsToWin}–${rpsToWin-2} &nbsp;→&nbsp; need <strong>${servePct}%</strong> of RPs</div>
-                        </div>
-                        <div style="font-weight:bold; font-size:0.95em; padding:4px 0;">
-                            Advantage: <strong>${advantage} percentage points easier</strong> to receive
-                        </div>
-                        ${usingDefault ? '<div style="font-size:0.8em;opacity:0.55;margin-top:4px;font-style:italic;">Using theoretical default — will update after your first set</div>' : ''}
-                        ${total > 0 ? `
-                        <div style="margin-top:10px; font-size:0.85em; opacity:0.75; border-top:1px solid rgba(255,255,255,0.1); padding-top:8px;">
-                            Your record — Receiving: ${rWins}W${rRecord} &nbsp;|&nbsp; Serving: ${sWins}W${sRecord}
-                            ${sampleDisclaimer(total)}
-                        </div>` : ''}
-                    </div>`;
-            }
-            
-            return `
-                <div class="stat-box">
-                    <h3>🎯 COIN TOSS ADVANTAGE</h3>
-                    ${currentSetType === '21' ? calcAdvantage(stats.sets21, '21-Point Sets', 7) : calcAdvantage(stats.sets15, '15-Point Sets', 5)}
-                    <button onclick="confirmResetStats()" style="margin-top:8px; width:100%; padding:6px; background:rgba(255,255,255,0.08); border:1px solid rgba(255,255,255,0.2); border-radius:6px; color:white; font-size:0.8em; cursor:pointer;">Reset All-Time Stats</button>
-                </div>`;
-        }
-
         // ── SECTION 11: SCORE-STATE WIN PROBABILITY ───────────────────────────
         async function buildScoreStateWinProbSection() {
             // All Time scope only — other scopes lack enough sets to be meaningful
@@ -7429,6 +7395,11 @@
                 const sswpSnap = await db.collection('sets')
                     .where('userId', '==', currentUser.uid)
                     .limit(500).get();
+
+                // First Switch Win % — leader at the first side switch (7 total pts) →
+                // set win rate. Reuses this same snapshot rather than a second query.
+                const _fswDocs = sswpSnap.docs.map(d => d.data()).filter(d => d.complete && d.includedInStats !== false);
+                const _p7Switch = calculateFirstSwitchWinPct(_fswDocs, 'normal');
 
                 // Six checkpoint buckets: { youTotal, youWon, oppTotal, oppWon }
                 // "you" = our team was the leading team at that checkpoint
@@ -7441,6 +7412,7 @@
                     const sd = doc.data();
                     if (sd.gameType === 'deciding') return;
                     if (!sd.complete) return;
+                    if (sd.includedInStats === false) return;
                     const ph = sd.pointHistory;
                     if (!Array.isArray(ph) || ph.length === 0) return;
 
@@ -7512,8 +7484,17 @@
 
                 const sswpHdr = 'font-size:0.78em;font-weight:bold;opacity:0.5;text-transform:uppercase;letter-spacing:0.05em;margin:10px 0 5px;';
 
+                const firstSwitchBlock = `<div style="background:rgba(255,255,255,0.05);border-radius:6px;padding:10px;margin-bottom:12px;">
+                    <div style="font-weight:bold;margin-bottom:4px;font-size:0.9em;letter-spacing:0.04em;">FIRST SWITCH WIN %</div>
+                    <div style="font-size:0.8em;opacity:0.65;margin-bottom:6px;">Team leading at the first side switch (7 total pts) &rarr; set win rate</div>
+                    ${_p7Switch !== null
+                        ? `<div class="stat-row"><span>Leader at first switch</span><span><strong>${_p7Switch.pct.toFixed(1)}%</strong> <span style="opacity:0.55;font-size:0.85em;">(${_p7Switch.wins}/${_p7Switch.total})</span></span></div>`
+                        : `<div class="stat-row"><span>Leader at first switch</span><span style="opacity:0.45;">No data</span></div>`}
+                </div>`;
+
                 return `<div class="stat-box">
                     <h3>📊 SCORE-STATE WIN PROBABILITY — 21-POINT SETS</h3>
+                    ${firstSwitchBlock}
                     <div style="font-size:0.82em;opacity:0.65;margin-bottom:12px;line-height:1.5;">21-pt sets only. How often does the leading team at each checkpoint go on to win?</div>
                     <div style="${sswpHdr}">At 7 total points</div>
                     ${sswpBlock('Ahead 7-0', sswp_b70)}
@@ -7540,6 +7521,11 @@
                     .where('userId', '==', currentUser.uid)
                     .limit(500).get();
 
+                // First Switch Win % — leader at the first side switch (5 total pts) →
+                // set win rate. Reuses this same snapshot rather than a second query.
+                const _fsw15Docs = sswp15Snap.docs.map(d => d.data()).filter(d => d.complete && d.includedInStats !== false);
+                const _p5Switch = calculateFirstSwitchWinPct(_fsw15Docs, 'deciding');
+
                 // Five checkpoint buckets: { youTotal, youWon, oppTotal, oppWon }
                 // "you" = our team was the leading team at that checkpoint
                 // "opp" = opponent was the leading team at that checkpoint
@@ -7553,6 +7539,7 @@
                     // (V15 is stored as a field on 'normal'/'regular' set docs, never as gameType='deciding')
                     if (sd.gameType !== 'deciding') return;
                     if (!sd.complete) return;
+                    if (sd.includedInStats === false) return;
                     const ph = sd.pointHistory;
                     if (!Array.isArray(ph) || ph.length === 0) return;
 
@@ -7623,8 +7610,17 @@
 
                 const sswp15Hdr = 'font-size:0.78em;font-weight:bold;opacity:0.5;text-transform:uppercase;letter-spacing:0.05em;margin:10px 0 5px;';
 
+                const firstSwitch15Block = `<div style="background:rgba(255,255,255,0.05);border-radius:6px;padding:10px;margin-bottom:12px;">
+                    <div style="font-weight:bold;margin-bottom:4px;font-size:0.9em;letter-spacing:0.04em;">FIRST SWITCH WIN %</div>
+                    <div style="font-size:0.8em;opacity:0.65;margin-bottom:6px;">Team leading at the first side switch (5 total pts) &rarr; set win rate</div>
+                    ${_p5Switch !== null
+                        ? `<div class="stat-row"><span>Leader at first switch</span><span><strong>${_p5Switch.pct.toFixed(1)}%</strong> <span style="opacity:0.55;font-size:0.85em;">(${_p5Switch.wins}/${_p5Switch.total})</span></span></div>`
+                        : `<div class="stat-row"><span>Leader at first switch</span><span style="opacity:0.45;">No data</span></div>`}
+                </div>`;
+
                 return `<div class="stat-box">
                     <h3>📊 SCORE-STATE WIN PROBABILITY — 15-POINT SETS</h3>
+                    ${firstSwitch15Block}
                     <div style="font-size:0.82em;opacity:0.65;margin-bottom:12px;line-height:1.5;">15-pt deciding sets only. Excludes V15 virtual data. How often does the leading team at each checkpoint go on to win?</div>
                     <div style="${sswp15Hdr}">At 5 total points</div>
                     ${sswp15Block('Ahead 5-0', sswp15_b50)}
@@ -7878,6 +7874,10 @@
                         const avgOurStr   = avgOur   !== null ? avgOur.toFixed(1)   : '—';
                         const avgTheirStr = avgTheir !== null ? avgTheir.toFixed(1) : '—';
                         const p7netStr    = p7net    !== null ? (p7net >= 0 ? '+' : '') + p7net.toFixed(1) : '—';
+                        // Opponent's OWN P7 while THEY stood on this side — from the opposite
+                        // side's bucket (when we're on oppSide, they're on this side).
+                        const oppOwnP7 = (oppSp && oppSp.segments > 0) ? (oppSp.their / oppSp.segments) : null;
+                        const oppOwnP7Str = oppOwnP7 !== null ? oppOwnP7.toFixed(1) : '—';
                         html += `
                             <div style="background:rgba(255,255,255,0.05);border-radius:6px;padding:10px;margin-bottom:6px;">
                                 <div style="font-weight:bold;margin-bottom:6px;">${side} Side</div>
@@ -7888,6 +7888,8 @@
                                 <div class="stat-row"><span>Opp pair wins</span><span><strong>${theirPct}%</strong> of points</span></div>
                                 <div class="stat-row" style="font-size:0.85em;opacity:0.8;"><span>Your P7 avg</span><span><strong>${avgOurStr}</strong> vs ${avgTheirStr}</span></div>
                                 <div class="stat-row" style="font-size:0.85em;"><span>P7 edge</span><span><strong>${p7netStr}</strong> pts/seg</span></div>
+                                <div style="font-size:0.82em;opacity:0.65;margin-bottom:4px;padding-top:4px;border-top:1px solid rgba(255,255,255,0.06);">Opponent on this side:</div>
+                                <div class="stat-row" style="font-size:0.85em;opacity:0.8;"><span>Opponent's P7 avg</span><span><strong>${oppOwnP7Str}</strong></span></div>
                             </div>`;
                     });
                     
@@ -7919,25 +7921,6 @@
                     html += `</div>`;
                 });
                 
-                // ── First Switch Win % ──────────────────────────────────────────
-                const _allSets = Object.values(_filteredVenueData).flatMap(vd => vd.sets);
-                const _p7Switch = calculateFirstSwitchWinPct(_allSets, 'normal');
-                const _p5Switch = calculateFirstSwitchWinPct(_allSets, 'deciding');
-                html += `<div style="background:rgba(255,255,255,0.05);border-radius:6px;padding:10px;margin-top:12px;">
-                    <div style="font-weight:bold;margin-bottom:8px;font-size:0.9em;letter-spacing:0.04em;">FIRST SWITCH WIN %</div>
-                    <div style="font-size:0.82em;opacity:0.65;margin-bottom:8px;">Team leading at the first side switch &rarr; set win rate</div>`;
-                if (_p7Switch !== null) {
-                    html += `<div class="stat-row"><span>P7 &mdash; leader at point 7</span><span><strong>${_p7Switch.pct.toFixed(1)}%</strong> <span style="opacity:0.55;font-size:0.85em;">(${_p7Switch.wins}/${_p7Switch.total})</span></span></div>`;
-                } else {
-                    html += `<div class="stat-row"><span>P7 &mdash; leader at point 7</span><span style="opacity:0.45;">No data</span></div>`;
-                }
-                if (_p5Switch !== null) {
-                    html += `<div class="stat-row"><span>P5 &mdash; leader at point 5</span><span><strong>${_p5Switch.pct.toFixed(1)}%</strong> <span style="opacity:0.55;font-size:0.85em;">(${_p5Switch.wins}/${_p5Switch.total})</span></span></div>`;
-                } else {
-                    html += `<div class="stat-row"><span>P5 &mdash; leader at point 5</span><span style="opacity:0.45;">N/A</span></div>`;
-                }
-                html += `</div>`;
-
                 html += `</div>`;
                 return html;
             } catch(e) {
@@ -7996,26 +7979,40 @@
                     const avgTB = r.theirBlocker?.count > 0 ? (r.theirBlocker.totalPS / r.theirBlocker.count).toFixed(1) : '—';
                     const avgOD = r.ourDefender?.count > 0  ? (r.ourDefender.totalPS  / r.ourDefender.count).toFixed(1)  : '—';
                     const avgTD = r.theirDefender?.count > 0? (r.theirDefender.totalPS/ r.theirDefender.count).toFixed(1): '—';
-                    
-                    const bCorr = r.blockerMatchup?.total > 0 
-                        ? `Your pairing wins <strong>${((r.blockerMatchup.ourWinAndWon || 0) / r.blockerMatchup.total * 100).toFixed(0)}%</strong> of sets when you win the Blocker matchup ${sampleDisclaimer(r.blockerMatchup.total)}` : '';
-                    const dCorr = r.defenderMatchup?.total > 0 
-                        ? `Your pairing wins <strong>${((r.defenderMatchup.ourWinAndWon || 0) / r.defenderMatchup.total * 100).toFixed(0)}%</strong> of sets when you win the Defender matchup ${sampleDisclaimer(r.defenderMatchup.total)}` : '';
-                    
+
+                    // Role battle win % — how often does winning the individual PS battle
+                    // by role translate into winning the set. rb.blocker/defender.total
+                    // only counts sets where OUR side won that battle (unlike the old
+                    // roles.blockerMatchup/defenderMatchup fields, whose denominator
+                    // included battles we lost too, understating this percentage).
+                    const rb = setStats.roleBattle;
+                    const battleStat = (data, label) => {
+                        const total = data?.total || 0;
+                        const won   = data?.won   || 0;
+                        const pct   = total > 0 ? Math.round(won / total * 100) : null;
+                        const bar   = pct !== null ? `<div style="height:4px;background:rgba(255,255,255,0.1);border-radius:2px;margin-top:4px;">
+                            <div style="height:4px;width:${pct}%;background:rgba(255,255,255,0.7);border-radius:2px;"></div></div>` : '';
+                        return `
+                            <div class="stat-row">
+                                <span>Win ${label} battle</span>
+                                <span><strong>${pct !== null ? pct + '%' : '—'}</strong> <span style="opacity:0.5;font-size:0.8em;">(${won}/${total})</span></span>
+                            </div>${bar}`;
+                    };
+
                     return `
                         <div style="font-size:0.85em;font-weight:bold;opacity:0.65;text-transform:uppercase;margin:12px 0 6px;">${label}</div>
                         <div ${rowHL}><span>Your Blocker — avg real pts/set serving</span><span><strong>${avgOB}</strong></span></div>
                         <div ${row}><span>Their Blocker — avg real pts/set serving</span><span><strong>${avgTB}</strong></span></div>
-                        ${bCorr ? `<div style="font-size:0.82em;opacity:0.75;padding:2px 10px 8px;">${bCorr}</div>` : ''}
+                        ${battleStat(rb?.blocker, 'Blocker')}
                         <div ${rowHL}><span>Your Defender — avg real pts/set serving</span><span><strong>${avgOD}</strong></span></div>
                         <div ${row}><span>Their Defender — avg real pts/set serving</span><span><strong>${avgTD}</strong></span></div>
-                        ${dCorr ? `<div style="font-size:0.82em;opacity:0.75;padding:2px 10px;">${dCorr}</div>` : ''}`;
+                        ${battleStat(rb?.defender, 'Defender')}`;
                 };
                 histSection = currentSetType === '21' ? buildRoleRows(stats.sets21, '21-Point Sets') : buildRoleRows(stats.sets15, '15-Point Sets');
             }
-            
+
             if (!liveSection && !histSection) return '';
-            return `<div class="stat-box"><h3>🏐 ROLE MATCHUP</h3>${liveSection}${histSection}</div>`;
+            return `<div class="stat-box"><h3>⚔️ ROLE BATTLE</h3>${liveSection}${histSection}</div>`;
         }
         
         // ── SECTION 6a: Live Server Section ─────────────────────────────────
@@ -8067,6 +8064,7 @@
                 snapshot.docs.forEach(doc => {
                     const d = doc.data();
                     if (!d.complete) return;
+                    if (d.includedInStats === false) return;
                     if (currentTierFilter !== 'all' && d.competitionTier !== currentTierFilter) return;
                     // Set type filter — deciding = 15pt, else 21pt
                     const isDeciding = d.gameType === 'deciding';
@@ -8188,37 +8186,7 @@
             return html;
         }
 
-        // ── SECTION 8: Role Battle Win % ─────────────────────────────────────
-        function buildRoleBattleSection(stats) {
-            if (!stats) return '';
-            const s = currentSetType === '15' ? stats.sets15 : stats.sets21;
-            const typeLabel = currentSetType === '15' ? '15-Point' : '21-Point';
-            const rb = s?.roleBattle;
-
-            function battleStat(data, label) {
-                const total = data?.total || 0;
-                const won   = data?.won   || 0;
-                const pct   = total > 0 ? Math.round(won / total * 100) : null;
-                const bar   = pct !== null ? `<div style="height:4px;background:rgba(255,255,255,0.1);border-radius:2px;margin-top:4px;">
-                    <div style="height:4px;width:${pct}%;background:rgba(255,255,255,0.7);border-radius:2px;"></div></div>` : '';
-                return `
-                    <div class="stat-row">
-                        <span>Win ${label} battle</span>
-                        <span><strong>${pct !== null ? pct + '%' : '—'}</strong> <span style="opacity:0.5;font-size:0.8em;">(${won}/${total})</span></span>
-                    </div>${bar}`;
-            }
-
-            return `
-                <div class="stat-box">
-                    <h3>⚔️ ROLE BATTLE WIN % — ${typeLabel}</h3>
-                    <div style="font-size:0.8em;opacity:0.6;margin-bottom:10px;">When your team wins the PS battle by role, how often do you win the set?</div>
-                    ${battleStat(rb?.blocker, 'Blocker')}
-                    ${battleStat(rb?.defender, 'Defender')}
-                    ${(!rb?.blocker?.total && !rb?.defender?.total) ? '<div style="opacity:0.5;font-size:0.85em;padding:4px 0;font-style:italic;">No role battle data yet — plays after each complete set</div>' : ''}
-                </div>`;
-        }
-
-        // ── SECTION 9: Serve/Receive First Win % ─────────────────────────────
+        // ── SECTION 8: Serve/Receive First Win % ─────────────────────────────
         function buildServeReceiveSection(stats) {
             if (!stats) return '';
             const s = currentSetType === '15' ? stats.sets15 : stats.sets21;
@@ -8237,6 +8205,25 @@
                     </div>${bar}`;
             }
 
+            // Overall (team-agnostic): does serving first or receiving first correlate
+            // with winning, regardless of which team actually served? servingTeamWins/
+            // receivingTeamWins track whichever team served first winning — a structural
+            // stat about the game itself, distinct from srStat above (your team's own
+            // record specifically).
+            const svWins = s?.servingTeamWins || 0;
+            const rcWins = s?.receivingTeamWins || 0;
+            const overallTotal = svWins + rcWins;
+            function overallStat(wins, label) {
+                const pct = overallTotal > 0 ? Math.round(wins / overallTotal * 100) : null;
+                const bar = pct !== null ? `<div style="height:4px;background:rgba(255,255,255,0.1);border-radius:2px;margin-top:4px;">
+                    <div style="height:4px;width:${pct}%;background:rgba(255,255,255,0.7);border-radius:2px;"></div></div>` : '';
+                return `
+                    <div class="stat-row">
+                        <span>${label} first</span>
+                        <span><strong>${pct !== null ? pct + '%' : '—'}</strong> <span style="opacity:0.5;font-size:0.8em;">(${wins}/${overallTotal})</span></span>
+                    </div>${bar}`;
+            }
+
             const noData = !s?.servedFirst?.total && !s?.receivedFirst?.total;
             return `
                 <div class="stat-box">
@@ -8245,11 +8232,16 @@
                     ${srStat(s?.servedFirst,   'Served')}
                     ${srStat(s?.receivedFirst, 'Received')}
                     ${noData ? '<div style="opacity:0.5;font-size:0.85em;padding:4px 0;font-style:italic;">No serve/receive data yet — updates after each complete set</div>' : ''}
+                    ${overallTotal > 0 ? `
+                    <div style="font-size:0.78em;font-weight:bold;opacity:0.5;text-transform:uppercase;letter-spacing:0.05em;margin:12px 0 5px;border-top:1px solid rgba(255,255,255,0.08);padding-top:8px;">Overall (both teams)</div>
+                    <div style="font-size:0.8em;opacity:0.6;margin-bottom:8px;">Does serving or receiving first predict winning, regardless of which team?</div>
+                    ${overallStat(svWins, 'Served')}
+                    ${overallStat(rcWins, 'Received')}` : ''}
                 </div>`;
         }
 
         // ── SECTION 2: Side Bias (venue-specific) ─────────────────────────────
-        async function buildSideBiasSection(competitive) {
+        async function buildSideBiasSection() {
             if (!currentUser) return '';
             try {
                 const todayStart = new Date(); todayStart.setHours(0,0,0,0);
@@ -8259,6 +8251,9 @@
 
                 // Group compass-direction point totals by venue — mixing venues
                 // together is invalid since North/South/East/West are venue-relative.
+                // Deliberately ignores the Competitive Sets Only filter: side bias is
+                // about which compass direction is easier to score on (court/wind/sun),
+                // not RP competitiveness, so blowout sets are still valid signal here.
                 const venueBias = {};
                 const addSetSideData = (setData) => {
                     if (!setData.complete) return;
@@ -8267,7 +8262,6 @@
                     if (currentTierFilter !== 'all' && setData.competitionTier !== currentTierFilter) return;
                     const vid = setData.venueId;
                     if (!vid) return;
-                    if (competitive && !isCompetitiveSet(setData.ourScore, setData.theirScore, setData.gameType === 'deciding' ? 15 : 21)) return;
                     const vname = setData.venue || vid;
                     if (!venueBias[vid]) venueBias[vid] = { name: vname, sidePoints: {} };
                     setData.completedSegments.forEach(seg => {
@@ -8322,7 +8316,8 @@
                 const venueName = venueBias[targetVid].name;
                 const pairs = [['north','south'], ['east','west']];
                 let html = `<div class="stat-box"><h3>🧭 SIDE BIAS — ${venueName.toUpperCase()}</h3>
-                    <div style="font-size:0.8em;opacity:0.6;margin-bottom:10px;">Total points scored on each side regardless of team — pure court/wind/sun data for this venue.</div>`;
+                    <div style="font-size:0.8em;opacity:0.6;margin-bottom:2px;">Total points scored on each side regardless of team — pure court/wind/sun data for this venue.</div>
+                    <div style="font-size:0.78em;opacity:0.5;font-style:italic;margin-bottom:10px;">Includes all sets played here, including blowouts — not filtered by Competitive Sets Only.</div>`;
 
                 let anyPair = false;
                 pairs.forEach(([a, b]) => {
