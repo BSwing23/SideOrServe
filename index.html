@@ -4481,9 +4481,10 @@
             ).join('');
 
             // Same wind-conditioned resolution as the pre-Set-1 recommendation: prefer
-            // data (this match's own sets 1 & 2, then personal history, then community
-            // pool) matched to the CURRENT wind level over an unconditioned blend —
-            // wind can genuinely differ between Set 1/2 and right now, before Set 3.
+            // personal data (this match's sets so far plus past matches, one combined
+            // pool) matched to the CURRENT wind level, then community pool, over an
+            // unconditioned blend — wind can genuinely differ between Set 1/2 and right
+            // now, before Set 3.
             const venueId = matchSetup.venue || null;
             const tier = matchSetup.competitionTier || 'NCAA_Pro';
             const swingleLevel = Math.round(matchSetup.weather?.beaufortForce ?? 0);
@@ -4508,11 +4509,9 @@
             }
 
             const p7SourceNote = {
-                'live-wind':     `Sets 1 &amp; 2 at Swingle ${swingleLevel} (n=${resolved.p7Data.side1Segments + resolved.p7Data.side2Segments} segments).`,
-                'personal-wind': `Your history at this venue at Swingle ${swingleLevel} (n=${resolved.p7Data.side1Segments + resolved.p7Data.side2Segments} segments).`,
+                'personal-wind': `Your own data at this venue at Swingle ${swingleLevel} (n=${resolved.p7Data.side1Segments + resolved.p7Data.side2Segments} segments).`,
                 'pooled-wind':   `Community-pooled data at Swingle ${swingleLevel} here (n=${resolved.p7Data.side1Segments + resolved.p7Data.side2Segments} segments).`,
-                'live-any':      `Sets 1 &amp; 2, all wind conditions (no Swingle ${swingleLevel} data yet).`,
-                'personal-any':  `Your history at this venue, all wind conditions (no Swingle ${swingleLevel} data yet).`
+                'personal-any':  `Your own data at this venue, all wind conditions (no Swingle ${swingleLevel} data yet).`
             }[resolved.source] || '';
 
             // Use actual calculated values from strategies
@@ -5491,47 +5490,19 @@
             };
         }
 
-        // This match's own completed sets (e.g. Sets 1 & 2 before Set 3's coin toss),
-        // filtered to only those played under a specific Swingle Scale level — each
-        // completed set carries its own weatherAtSetStart, so wind can genuinely differ
-        // set to set. Same shape/math as calculateP7Stats(), just wind-filtered first.
-        function calculateWindConditionedLiveP7Stats(swingleLevel) {
-            const side1Stats = { our: [], their: [] };
-            const side2Stats = { our: [], their: [] };
-            (matchScore.setsCompleted || []).forEach(set => {
-                const setSwingle = Math.round(
-                    set.matchState?.weatherAtSetStart?.swingleScale
-                    ?? set.matchState?.weatherAtSetStart?.beaufortForce
-                    ?? NaN
-                );
-                if (setSwingle !== swingleLevel) return;
-                const setP7 = set.matchState.p7Stats;
-                if (!setP7) return;
-                side1Stats.our   = side1Stats.our.concat(setP7.side1.our);
-                side1Stats.their = side1Stats.their.concat(setP7.side1.their);
-                side2Stats.our   = side2Stats.our.concat(setP7.side2.our);
-                side2Stats.their = side2Stats.their.concat(setP7.side2.their);
-            });
-            return computeP7StatsFromSides(side1Stats, side2Stats);
-        }
-
         // Resolves the best available P7 data for a Coin Toss recommendation, preferring
         // data captured under the SAME Swingle Scale wind level as right now — "what
         // actually happens on each side when it's this windy here" — over an all-conditions
         // blend. Tries, in order:
-        //   1. This match's own sets so far, played under this exact Swingle level
-        //      (relevant before Set 3 — sets 1 & 2 may have been played in different wind)
-        //   2. This user's own historical sets at this venue under this exact Swingle level
-        //   3. Community-pooled sets (any subscriber, built-in venues only) at this level
-        //   4. This match's own sets under any wind condition (the original live blend)
-        //   5. This user's own historical sets under any wind condition
-        // Returns { p7Data, source } — source is one of 'live-wind' | 'personal-wind' |
-        // 'pooled-wind' | 'live-any' | 'personal-any' | 'none', used to label the
-        // recommendation honestly in the UI.
+        //   1. This user's own data at this venue at this exact Swingle level — this
+        //      match's sets so far AND past matches, combined. Wind doesn't know or care
+        //      which set a segment came from, only what it actually was at the time, so
+        //      these are one pool, not separate "live" vs "historical" tiers.
+        //   2. Community-pooled data (any subscriber, built-in venues only) at this level
+        //   3. This user's own data at this venue under any wind condition
+        // Returns { p7Data, source } — source is one of 'personal-wind' | 'pooled-wind' |
+        // 'personal-any' | 'none', used to label the recommendation honestly in the UI.
         async function resolveWindConditionedP7Data(venueId, tier, swingleLevel, side1Name, side2Name, competitive = true) {
-            const liveWind = calculateWindConditionedLiveP7Stats(swingleLevel);
-            if (liveWind.hasData) return { p7Data: liveWind, source: 'live-wind' };
-
             if (venueId) {
                 const personalWind = await calculateHistoricalP7StatsForVenue(venueId, competitive, swingleLevel);
                 if (personalWind.hasData) return { p7Data: personalWind, source: 'personal-wind' };
@@ -5540,12 +5511,7 @@
                 const pooledBucket = pooled?.swingle?.['sw' + swingleLevel];
                 const pooledP7 = computeP7StatsFromPooledBucket(pooledBucket, side1Name, side2Name);
                 if (pooledP7.hasData) return { p7Data: pooledP7, source: 'pooled-wind' };
-            }
 
-            const liveAny = calculateP7Stats();
-            if (liveAny.hasData) return { p7Data: liveAny, source: 'live-any' };
-
-            if (venueId) {
                 const personalAny = await calculateHistoricalP7StatsForVenue(venueId, competitive);
                 if (personalAny.hasData) return { p7Data: personalAny, source: 'personal-any' };
             }
@@ -10044,45 +10010,74 @@
             return computeP7StatsFromSides(side1Stats, side2Stats);
         }
 
-        // Historical counterpart to calculateP7Stats() for pre-match tools — aggregates
-        // p7Stats.side1/side2 from completed `sets` docs at a specific venue, using the
-        // exact same computeP7StatsFromSides() math as the live path. Filters mirror the
-        // explicit currentTierFilter/currentVenueFilter pattern used elsewhere (Side
-        // Advantage, Server Performance) — deliberately does NOT use matchSetup.competitionTier,
-        // which is scoped to whatever match is currently being configured, not this query.
+        // "Personal" counterpart to calculateP7Stats() for pre-match/Set-3 tools —
+        // aggregates p7Stats.side1/side2 from this user's completed sets at a specific
+        // venue, using the exact same computeP7StatsFromSides() math as the live path.
+        // Filters mirror the explicit currentTierFilter/currentVenueFilter pattern used
+        // elsewhere (Side Advantage, Server Performance) — deliberately does NOT use
+        // matchSetup.competitionTier, which is scoped to whatever match is currently
+        // being configured, not this query.
         //
         // swingleLevel (optional): when provided, only counts sets played under that
         // exact Swingle Scale level at set start — "what actually happens on each side
         // when it's this windy here," not an all-conditions blend. Pass null/omit for
         // the original unconditioned behavior.
+        //
+        // Combines Firestore history with this match's own completed sets so far (e.g.
+        // Sets 1 & 2, before Set 3's coin toss) into ONE pool — wind doesn't know or
+        // care which set a segment came from, only what it actually was at the time,
+        // so "live" and "historical" aren't kept as separate tiers. processedSetIds
+        // guards against double-counting a set that's both in memory and already saved
+        // to Firestore.
         async function calculateHistoricalP7StatsForVenue(venueId, competitive = true, swingleLevel = null) {
-            if (!currentUser || !venueId) return { hasData: false };
+            if (!venueId) return { hasData: false };
             try {
-                const snapshot = await db.collection('sets')
-                    .where('userId', '==', currentUser.uid)
-                    .limit(500).get();
-
                 const side1Stats = { our: [], their: [] };
                 const side2Stats = { our: [], their: [] };
+                const processedSetIds = new Set();
 
-                snapshot.docs.forEach(doc => {
-                    const d = doc.data();
-                    if (!d.complete) return;
-                    if (d.includedInStats === false) return;
-                    if (d.venueId !== venueId) return;
-                    if (swingleLevel !== null) {
-                        const setSwingle = Math.round(
-                            d.weatherAtSetStart?.swingleScale ?? d.weatherAtSetStart?.beaufortForce ?? NaN
-                        );
-                        if (setSwingle !== swingleLevel) return;
-                    }
-                    if (competitive && !isCompetitiveSet(d.ourScore, d.theirScore, d.gameType === 'deciding' ? 15 : 21)) return;
-                    const p7 = d.p7Stats;
-                    if (!p7?.side1 || !p7?.side2) return;
-                    side1Stats.our   = side1Stats.our.concat(p7.side1.our   || []);
-                    side1Stats.their = side1Stats.their.concat(p7.side1.their || []);
-                    side2Stats.our   = side2Stats.our.concat(p7.side2.our   || []);
-                    side2Stats.their = side2Stats.their.concat(p7.side2.their || []);
+                const matchesSwingle = (weatherAtSetStart) => {
+                    if (swingleLevel === null) return true;
+                    const setSwingle = Math.round(
+                        weatherAtSetStart?.swingleScale ?? weatherAtSetStart?.beaufortForce ?? NaN
+                    );
+                    return setSwingle === swingleLevel;
+                };
+
+                if (currentUser) {
+                    const snapshot = await db.collection('sets')
+                        .where('userId', '==', currentUser.uid)
+                        .limit(500).get();
+
+                    snapshot.docs.forEach(doc => {
+                        const d = doc.data();
+                        if (!d.complete) return;
+                        if (d.includedInStats === false) return;
+                        if (d.venueId !== venueId) return;
+                        if (!matchesSwingle(d.weatherAtSetStart)) return;
+                        if (competitive && !isCompetitiveSet(d.ourScore, d.theirScore, d.gameType === 'deciding' ? 15 : 21)) return;
+                        const p7 = d.p7Stats;
+                        if (!p7?.side1 || !p7?.side2) return;
+                        processedSetIds.add(doc.id);
+                        side1Stats.our   = side1Stats.our.concat(p7.side1.our   || []);
+                        side1Stats.their = side1Stats.their.concat(p7.side1.their || []);
+                        side2Stats.our   = side2Stats.our.concat(p7.side2.our   || []);
+                        side2Stats.their = side2Stats.their.concat(p7.side2.their || []);
+                    });
+                }
+
+                // Fold in this match's own completed sets not already counted above
+                // (e.g. saved moments ago, before this read landed).
+                (matchScore.setsCompleted || []).forEach(set => {
+                    if (set.setId && processedSetIds.has(set.setId)) return;
+                    if (set.matchSetup?.venue !== venueId) return;
+                    if (!matchesSwingle(set.matchState?.weatherAtSetStart)) return;
+                    const setP7 = set.matchState?.p7Stats;
+                    if (!setP7) return;
+                    side1Stats.our   = side1Stats.our.concat(setP7.side1.our);
+                    side1Stats.their = side1Stats.their.concat(setP7.side1.their);
+                    side2Stats.our   = side2Stats.our.concat(setP7.side2.our);
+                    side2Stats.their = side2Stats.their.concat(setP7.side2.their);
                 });
 
                 return computeP7StatsFromSides(side1Stats, side2Stats);
