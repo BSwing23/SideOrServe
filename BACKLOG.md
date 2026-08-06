@@ -30,6 +30,19 @@ match /sets/{setId} {
 
 ---
 
+### venueStats Firestore Rule Not Published
+Pooled Community Venue Data (Side Bias section) reads/writes a brand new `venueStats` collection and needs this rule added in Firebase console — without it, `updatePooledVenueStats()`/`fetchPooledVenueStats()` fail silently (both are wrapped in try/catch so this won't break anything else, the community data section will just never appear):
+```
+match /venueStats/{venueId} {
+  allow read: if request.auth != null;
+  allow write: if request.auth != null;
+}
+```
+Note this is intentionally broader than the `sets` rule — any authenticated subscriber, not just the doc owner, since pooling across everyone is the point.
+**Status:** Rule written, needs to be added to Firebase console (Brian to do — not something Claude can apply directly).
+
+---
+
 ## High Priority (Affects Usability)
 
 ### All Time Server Stats Blank
@@ -80,6 +93,9 @@ Tracking is implemented in sets15/sets21 buckets. Display exists. Needs more dat
 
 ### Persist Data Tab Drawer Open/Closed State
 Data tab stat-box sections are now collapsible drawers (default collapsed). State is not persisted — every `updateDataTab()` re-render (scope change, tier/venue filter change, reload) resets all drawers to collapsed. Could track open section titles in a Set and re-apply `stat-box-expanded` after render if this becomes annoying in practice.
+
+### Wire Pooled Venue Stats Into the Coin Toss Recommendation Engine
+**Done.** `resolveWindConditionedP7Data()` now feeds `calculateCoinTossStrategies()` for both the pre-Set-1 recommendation and the pre-Set-3 recommendation, in priority order: this match's own sets so far at the current Swingle level → personal history at this venue at this level → community-pooled data at this level (built-in venues only) → this match's own sets at any wind level → personal history at any wind level. The recommendation UI labels which tier actually backed the number, so it's never silently blending wind conditions without saying so. Still not wired: `calculateReceiveAdvantage()`/RP-based receive-vs-serve math is untouched (intentionally — that's a venue-independent structural stat, not something wind or side data should influence).
 
 ---
 

@@ -66,7 +66,7 @@ Everything lives in `index.html` — HTML, CSS, JavaScript, Firebase config. No 
 ### Firebase / Firestore
 - Auth: Google OAuth + email/password
 - Database: Firestore
-- Collections: `players/{uid}`, `matches/{matchId}`, `sets/{setId}`
+- Collections: `players/{uid}`, `matches/{matchId}`, `sets/{setId}`, `venueStats/{venueId}`
 
 **Critical Firestore rule** — the `sets` collection requires this rule or all data tab queries will fail with permission-denied:
 ```
@@ -77,6 +77,18 @@ match /sets/{setId} {
 ```
 
 **Query pattern:** Always use `where('userId', '==', currentUser.uid)` — not `owners array-contains`. The `owners` array-contains pattern requires a composite index and a different security rule that is not configured.
+
+**`venueStats` rule** — required for pooled community venue data (see "Pooled Venue Stats" below) or every write/read against it fails with permission-denied:
+```
+match /venueStats/{venueId} {
+  allow read: if request.auth != null;
+  allow write: if request.auth != null;
+}
+```
+Unlike `sets`, this is intentionally readable/writable by *any* authenticated subscriber, not just the owner — that's the whole point (cross-subscriber pooling). This trusts the client not to corrupt the pool; there's no per-write validation beyond requiring auth, same trust model as the rest of this app's client-driven stats.
+
+### Pooled Venue Stats (cross-subscriber)
+`updatePooledVenueStats()` / `fetchPooledVenueStats()` (in `index.html`) build a shared, aggregate-only database of side/weather effects at built-in venues, pooled across every subscriber — not just the current user. Scoped by venue + competition tier + Swingle Scale wind level. Custom venues are deliberately excluded: a custom venue's id (`custom-0`, `custom-1`, ...) is just an index into *that specific user's* own venue list, not globally unique, so pooling them would silently merge unrelated courts. Displayed as "🌐 Community Data" inside the Side Bias section of the Data tab. No raw per-set data is exposed or attributable to any individual user — only summed point totals per venue/tier/wind-level bucket.
 
 ### Firestore Data Architecture
 Each set is saved as its own document in the `sets` collection. Match documents are lightweight headers only. Set documents contain all analytics: `serverStats`, `completedSegments`, `p7Stats`, `longestRuns`, `weatherAtSetStart`, `ourRealPoints`, `theirRealPoints`, `roleBattle`, `servedFirst`, `receivedFirst`.

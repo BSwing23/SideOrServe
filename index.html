@@ -1741,9 +1741,13 @@
             const beaufortLevel = getBeaufortLevel(quickToolWeatherData.windSpeed);
 
             // Same synthesis engine the live in-match Coin Toss tab uses — fed from
-            // historical P7 data for this venue instead of live matchState.
+            // historical P7 data for this venue instead of live matchState. Prefers
+            // data captured at this exact wind level over an all-conditions blend.
             const venueKey = document.getElementById('quickCoinTossVenue')?.value || null;
-            const historicalP7Data = venueKey ? await calculateHistoricalP7StatsForVenue(venueKey) : { hasData: false };
+            const quickTier = matchSetup?.competitionTier || 'NCAA_Pro';
+            const { p7Data: historicalP7Data, source: p7Source } = venueKey
+                ? await resolveWindConditionedP7Data(venueKey, quickTier, beaufortLevel, sides[0], sides[1])
+                : { p7Data: { hasData: false }, source: 'none' };
             const strategies = calculateCoinTossStrategies(venueKey, {
                 historicalP7Data,
                 side1Name: sides[0],
@@ -1797,7 +1801,11 @@
                             <div style="font-size:1.2em; font-weight:bold;">${strategies.receiveAdvantagePoints.toFixed(1)} pts</div>
                         </div>
                     </div>
-                    ${historicalP7Data.hasData ? `<div style="font-size:0.78em; opacity:0.55; text-align:center;">Based on ${historicalP7Data.side1Segments + historicalP7Data.side2Segments} historical segment(s) at this venue.</div>` : ''}
+                    ${historicalP7Data.hasData ? `<div style="font-size:0.78em; opacity:0.55; text-align:center;">${
+                        p7Source === 'personal-wind' ? `Based on ${historicalP7Data.side1Segments + historicalP7Data.side2Segments} of your own segments at Swingle ${beaufortLevel} here.` :
+                        p7Source === 'pooled-wind'   ? `Based on ${historicalP7Data.side1Segments + historicalP7Data.side2Segments} community-pooled segments at Swingle ${beaufortLevel} here.` :
+                        `Based on ${historicalP7Data.side1Segments + historicalP7Data.side2Segments} of your own segments across all wind conditions here (no data yet at Swingle ${beaufortLevel}).`
+                    }</div>` : ''}
                 `;
             }
 
@@ -4110,6 +4118,7 @@
                 await saveSetToFirestore(true);   // finalizes set doc → currentSetId is now set
                 console.log('[STALENESS-DEBUG] handleSetComplete: saveSetToFirestore resolved at', new Date().toISOString(), 'currentSetId=', currentSetId);
                 await updateRPStats();
+                await updatePooledVenueStats();  // best-effort — never throws, see function
                 const setData = {
                     setNumber: matchScore.currentSetNumber,
                     winner: winner,
@@ -4464,22 +4473,47 @@
         // Set 3 state
         let set3State = { yourSide: null, servingTeam: null, servingServer: null };
         
-        function buildSet3GuidanceBox() {
+        async function buildSet3GuidanceBox() {
             const prevSetup = matchScore.setsCompleted[0].matchSetup;
             const sides = (prevSetup.orientation || 'North-South').split('-');
             document.getElementById('set3SideSelector').innerHTML = sides.map(s =>
                 `<div class="role-option" onclick="selectSet3Side('${s}', this)">${s}</div>`
             ).join('');
-            
+
+            // Same wind-conditioned resolution as the pre-Set-1 recommendation: prefer
+            // data (this match's own sets 1 & 2, then personal history, then community
+            // pool) matched to the CURRENT wind level over an unconditioned blend —
+            // wind can genuinely differ between Set 1/2 and right now, before Set 3.
+            const venueId = matchSetup.venue || null;
+            const tier = matchSetup.competitionTier || 'NCAA_Pro';
+            const swingleLevel = Math.round(matchSetup.weather?.beaufortForce ?? 0);
+            const resolved = await resolveWindConditionedP7Data(venueId, tier, swingleLevel, sides[0], sides[1]);
+
             // Build coin toss recommendation from match data
-            const strategies = calculateCoinTossStrategies();
+            const strategies = calculateCoinTossStrategies(venueId, {
+                historicalP7Data: resolved.p7Data,
+                side1Name: sides[0],
+                side2Name: sides[1],
+                swingleScale: swingleLevel,
+                gameType: 'deciding',
+                switchInterval: 5,
+                preferOverLive: true
+            });
             const ctBox = document.getElementById('set3CoinTossGuidance');
             if (!ctBox) return;
-            
+
             if (strategies.noData) {
                 ctBox.innerHTML = `<div style="opacity:0.7;font-size:0.9em;">Complete at least one segment to unlock coin toss guidance.</div>`;
                 return;
             }
+
+            const p7SourceNote = {
+                'live-wind':     `Sets 1 &amp; 2 at Swingle ${swingleLevel} (n=${resolved.p7Data.side1Segments + resolved.p7Data.side2Segments} segments).`,
+                'personal-wind': `Your history at this venue at Swingle ${swingleLevel} (n=${resolved.p7Data.side1Segments + resolved.p7Data.side2Segments} segments).`,
+                'pooled-wind':   `Community-pooled data at Swingle ${swingleLevel} here (n=${resolved.p7Data.side1Segments + resolved.p7Data.side2Segments} segments).`,
+                'live-any':      `Sets 1 &amp; 2, all wind conditions (no Swingle ${swingleLevel} data yet).`,
+                'personal-any':  `Your history at this venue, all wind conditions (no Swingle ${swingleLevel} data yet).`
+            }[resolved.source] || '';
 
             // Use actual calculated values from strategies
             const ctx = strategies.contextState;
@@ -4528,6 +4562,7 @@
                         <div style="font-size:0.75em;color:#000;opacity:0.55;margin-top:5px;">
                             Side adv: ${fmt(bestAdv)} · Receive adv: ${fmt(recAdvPts)} · ${recAdvText}
                         </div>
+                        ${p7SourceNote ? `<div style="font-size:0.7em;color:#000;opacity:0.5;margin-top:4px;">${p7SourceNote}</div>` : ''}
                     </div>
                     <div style="font-size:0.82em;display:flex;flex-direction:column;gap:5px;">
                         <div style="padding:7px 10px;background:rgba(255,255,255,0.18);border-radius:5px;color:white;">
@@ -5333,6 +5368,189 @@
             } catch (error) {
                 console.error('[RP STATS] Error updating:', error);
             }
+        }
+
+        // ── Pooled Venue Stats (cross-subscriber, built-in venues only) ─────────
+        // Builds a shared "does wind favor a side at this venue" database across every
+        // Side or Serve subscriber who's played there, grouped by venue + competition
+        // tier + Swingle Scale. Aggregate only — no raw per-set data is exposed, and no
+        // per-user identity is stored here. Requires this Firestore rule (not applied by
+        // this code — add manually in the Firebase console):
+        //   match /venueStats/{venueId} {
+        //     allow read: if request.auth != null;
+        //     allow write: if request.auth != null;
+        //   }
+        // That rule trusts any authenticated subscriber's client not to corrupt the pool
+        // (same client-driven trust model as the rest of this app's stats) — there's no
+        // per-write validation beyond requiring auth.
+        async function updatePooledVenueStats() {
+            try {
+                if (!currentUser) return;
+                const venueId = matchSetup.venue;
+                // Built-in venues only — "custom-0" etc. is just an index into each
+                // user's own venue list, not a globally unique id, so pooling custom
+                // venues would silently merge unrelated courts.
+                if (!venueId || !venues[venueId]) return;
+                const segments = matchState.completedSegments || [];
+                if (!segments.length) return;
+
+                const tier = matchSetup.competitionTier || 'NCAA_Pro';
+                const swingleLevel = Math.round(
+                    matchState.weatherAtSetStart?.swingleScale
+                    ?? matchState.weatherAtSetStart?.beaufortForce
+                    ?? 0
+                );
+                const swingleKey = 'sw' + swingleLevel;
+
+                // Aggregate this set's own segments first — "scoredHere" = points by
+                // whichever team was standing on that side; "scoredThere" = the
+                // opponent's points during that same segment (team-agnostic, since the
+                // pool mixes data across many different users' teams).
+                const localSidePoints = {};
+                segments.forEach(seg => {
+                    if (!seg.side) return;
+                    const key = seg.side.toLowerCase();
+                    if (!localSidePoints[key]) localSidePoints[key] = { scoredHere: 0, scoredThere: 0, segments: 0 };
+                    localSidePoints[key].scoredHere += seg.ourPoints || 0;
+                    localSidePoints[key].scoredThere += seg.theirPoints || 0;
+                    localSidePoints[key].segments++;
+                });
+
+                const venueRef = db.collection('venueStats').doc(venueId);
+                const docSnap = await venueRef.get();
+
+                if (!docSnap.exists) {
+                    await venueRef.set({
+                        venueName: venues[venueId].name,
+                        updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+                        tiers: {
+                            [tier]: {
+                                setsCount: 1,
+                                swingle: {
+                                    [swingleKey]: { sidePoints: localSidePoints }
+                                }
+                            }
+                        }
+                    });
+                } else {
+                    const updates = {
+                        [`tiers.${tier}.setsCount`]: firebase.firestore.FieldValue.increment(1),
+                        updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+                    };
+                    Object.entries(localSidePoints).forEach(([side, pts]) => {
+                        const base = `tiers.${tier}.swingle.${swingleKey}.sidePoints.${side}`;
+                        updates[`${base}.scoredHere`] = firebase.firestore.FieldValue.increment(pts.scoredHere);
+                        updates[`${base}.scoredThere`] = firebase.firestore.FieldValue.increment(pts.scoredThere);
+                        updates[`${base}.segments`] = firebase.firestore.FieldValue.increment(pts.segments);
+                    });
+                    await venueRef.update(updates);
+                }
+            } catch (e) {
+                // Best-effort community feature — never let this block the user's own save.
+                console.error('[POOLED VENUE STATS] Error:', e);
+            }
+        }
+
+        // Read-side counterpart — returns { setsCount, swingle: { sw0: {...}, sw4: {...} } }
+        // for the given venue + tier, or null if nothing's been pooled yet.
+        async function fetchPooledVenueStats(venueId, tier) {
+            if (!venueId || !venues[venueId]) return null;
+            try {
+                const snap = await db.collection('venueStats').doc(venueId).get();
+                if (!snap.exists) return null;
+                return snap.data()?.tiers?.[tier] || null;
+            } catch (e) {
+                console.error('[POOLED VENUE STATS] Fetch error:', e);
+                return null;
+            }
+        }
+
+        // Converts one pooled Swingle-level bucket (sums + segment counts, from
+        // updatePooledVenueStats()) into the same shape computeP7StatsFromSides()
+        // produces, so it's a drop-in historicalP7Data source for
+        // calculateCoinTossStrategies() — same synthesis math, community-pooled
+        // wind-conditioned data instead of one user's own segment arrays.
+        function computeP7StatsFromPooledBucket(swingleBucket, side1Name, side2Name) {
+            const sp = swingleBucket?.sidePoints || {};
+            const s1 = sp[side1Name?.toLowerCase()] || { scoredHere: 0, scoredThere: 0, segments: 0 };
+            const s2 = sp[side2Name?.toLowerCase()] || { scoredHere: 0, scoredThere: 0, segments: 0 };
+            if (s1.segments === 0 && s2.segments === 0) return { hasData: false };
+
+            const avgOurSide1   = s1.segments > 0 ? s1.scoredHere  / s1.segments : 0;
+            const avgTheirSide1 = s1.segments > 0 ? s1.scoredThere / s1.segments : 0;
+            const avgOurSide2   = s2.segments > 0 ? s2.scoredHere  / s2.segments : 0;
+            const avgTheirSide2 = s2.segments > 0 ? s2.scoredThere / s2.segments : 0;
+
+            return {
+                hasData: true,
+                avgOurSide1, avgTheirSide1, avgOurSide2, avgTheirSide2,
+                p7DiffSide1: avgOurSide1 - avgTheirSide1,
+                p7DiffSide2: avgOurSide2 - avgTheirSide2,
+                side1Segments: s1.segments,
+                side2Segments: s2.segments
+            };
+        }
+
+        // This match's own completed sets (e.g. Sets 1 & 2 before Set 3's coin toss),
+        // filtered to only those played under a specific Swingle Scale level — each
+        // completed set carries its own weatherAtSetStart, so wind can genuinely differ
+        // set to set. Same shape/math as calculateP7Stats(), just wind-filtered first.
+        function calculateWindConditionedLiveP7Stats(swingleLevel) {
+            const side1Stats = { our: [], their: [] };
+            const side2Stats = { our: [], their: [] };
+            (matchScore.setsCompleted || []).forEach(set => {
+                const setSwingle = Math.round(
+                    set.matchState?.weatherAtSetStart?.swingleScale
+                    ?? set.matchState?.weatherAtSetStart?.beaufortForce
+                    ?? NaN
+                );
+                if (setSwingle !== swingleLevel) return;
+                const setP7 = set.matchState.p7Stats;
+                if (!setP7) return;
+                side1Stats.our   = side1Stats.our.concat(setP7.side1.our);
+                side1Stats.their = side1Stats.their.concat(setP7.side1.their);
+                side2Stats.our   = side2Stats.our.concat(setP7.side2.our);
+                side2Stats.their = side2Stats.their.concat(setP7.side2.their);
+            });
+            return computeP7StatsFromSides(side1Stats, side2Stats);
+        }
+
+        // Resolves the best available P7 data for a Coin Toss recommendation, preferring
+        // data captured under the SAME Swingle Scale wind level as right now — "what
+        // actually happens on each side when it's this windy here" — over an all-conditions
+        // blend. Tries, in order:
+        //   1. This match's own sets so far, played under this exact Swingle level
+        //      (relevant before Set 3 — sets 1 & 2 may have been played in different wind)
+        //   2. This user's own historical sets at this venue under this exact Swingle level
+        //   3. Community-pooled sets (any subscriber, built-in venues only) at this level
+        //   4. This match's own sets under any wind condition (the original live blend)
+        //   5. This user's own historical sets under any wind condition
+        // Returns { p7Data, source } — source is one of 'live-wind' | 'personal-wind' |
+        // 'pooled-wind' | 'live-any' | 'personal-any' | 'none', used to label the
+        // recommendation honestly in the UI.
+        async function resolveWindConditionedP7Data(venueId, tier, swingleLevel, side1Name, side2Name, competitive = true) {
+            const liveWind = calculateWindConditionedLiveP7Stats(swingleLevel);
+            if (liveWind.hasData) return { p7Data: liveWind, source: 'live-wind' };
+
+            if (venueId) {
+                const personalWind = await calculateHistoricalP7StatsForVenue(venueId, competitive, swingleLevel);
+                if (personalWind.hasData) return { p7Data: personalWind, source: 'personal-wind' };
+
+                const pooled = await fetchPooledVenueStats(venueId, tier);
+                const pooledBucket = pooled?.swingle?.['sw' + swingleLevel];
+                const pooledP7 = computeP7StatsFromPooledBucket(pooledBucket, side1Name, side2Name);
+                if (pooledP7.hasData) return { p7Data: pooledP7, source: 'pooled-wind' };
+            }
+
+            const liveAny = calculateP7Stats();
+            if (liveAny.hasData) return { p7Data: liveAny, source: 'live-any' };
+
+            if (venueId) {
+                const personalAny = await calculateHistoricalP7StatsForVenue(venueId, competitive);
+                if (personalAny.hasData) return { p7Data: personalAny, source: 'personal-any' };
+            }
+
+            return { p7Data: { hasData: false }, source: 'none' };
         }
 
         function showForceEndOptions() {
@@ -8374,6 +8592,43 @@
                     html += `<div style="opacity:0.6;font-size:0.9em;">No compass-direction data yet for this venue.</div>`;
                 }
 
+                // Community data: pooled across every Side or Serve subscriber who's
+                // played at this venue at this tier — built-in venues only (see
+                // updatePooledVenueStats() for why custom venues can't pool safely).
+                const pooledTier = currentTierFilter !== 'all' ? currentTierFilter : (matchSetup.competitionTier || 'NCAA_Pro');
+                const pooled = await fetchPooledVenueStats(targetVid, pooledTier);
+                if (pooled?.swingle) {
+                    const swingleKeys = Object.keys(pooled.swingle)
+                        .map(k => parseInt(k.replace('sw', ''), 10))
+                        .sort((a, b) => a - b);
+                    let communityRows = '';
+                    swingleKeys.forEach(level => {
+                        const sp2 = pooled.swingle['sw' + level].sidePoints || {};
+                        pairs.forEach(([a, b]) => {
+                            const aData = sp2[a], bData = sp2[b];
+                            if (!aData && !bData) return;
+                            const aTotal = (aData?.scoredHere || 0) + (bData?.scoredThere || 0);
+                            const bTotal = (bData?.scoredHere || 0) + (aData?.scoredThere || 0);
+                            const grand = aTotal + bTotal;
+                            if (grand === 0) return;
+                            const aPct2 = Math.round(aTotal / grand * 100);
+                            const bPct2 = 100 - aPct2;
+                            const segs = (aData?.segments || 0) + (bData?.segments || 0);
+                            communityRows += `<div class="stat-row" style="font-size:0.85em;">
+                                <span>Swingle ${level}: ${a.charAt(0).toUpperCase()+a.slice(1)} vs ${b.charAt(0).toUpperCase()+b.slice(1)}</span>
+                                <span><strong>${aPct2}% / ${bPct2}%</strong> <span style="opacity:0.5;font-size:0.85em;">(n=${segs} segments)</span></span>
+                            </div>`;
+                        });
+                    });
+                    if (communityRows) {
+                        html += `<div style="margin-top:14px;padding-top:10px;border-top:1px solid rgba(255,255,255,0.1);">
+                            <div style="font-weight:bold;font-size:0.85em;letter-spacing:0.04em;margin-bottom:2px;">🌐 COMMUNITY DATA — ${pooledTier.replace(/_/g,' ')}</div>
+                            <div style="font-size:0.78em;opacity:0.55;margin-bottom:8px;">Pooled across every Side or Serve subscriber who's logged sets at this venue at this tier, by wind level.</div>
+                            ${communityRows}
+                        </div>`;
+                    }
+                }
+
                 html += `</div>`;
                 return html;
             } catch(e) {
@@ -8396,15 +8651,20 @@
             // the configured venue so this shows a real recommendation instead of just a
             // venue picker. Live in-match behavior is untouched — calculateP7Stats().hasData
             // is true there, so preMatch never gets built and calculateCoinTossStrategies()
-            // takes the exact same path it always has.
+            // takes the exact same path it always has. Prefers data captured at the current
+            // wind level (personal, then community-pooled) over an all-conditions blend.
             const venueId = explicitVenueId || matchSetup.venue || null;
             let preMatch = null;
+            let p7Source = 'none';
             if (!calculateP7Stats().hasData && venueId) {
                 const orientation = matchSetup.orientation || venues[venueId]?.orientation || 'North-South';
                 const sides = orientation.split('-');
-                const historicalP7Data = await calculateHistoricalP7StatsForVenue(venueId);
+                const swingleLevel = Math.round(matchSetup.weather?.beaufortForce ?? 0);
+                const tier = matchSetup.competitionTier || 'NCAA_Pro';
+                const resolved = await resolveWindConditionedP7Data(venueId, tier, swingleLevel, sides[0], sides[1]);
+                p7Source = resolved.source;
                 preMatch = {
-                    historicalP7Data,
+                    historicalP7Data: resolved.p7Data,
                     side1Name: sides[0],
                     side2Name: sides[1],
                     swingleScale: matchSetup.weather?.beaufortForce ?? 0
@@ -8451,7 +8711,17 @@
             const projectedTotal = (stDisp?.competitiveCount > 0)
                 ? stDisp.totalPointsSum / stDisp.competitiveCount
                 : (isDecidingDisp ? 28 : 40);
-            const setsLabel = matchScore.setsCompleted.length === 1 ? 'Set 1' : 'Sets 1 & 2';
+            const swingleInt = Math.round(matchSetup.weather?.beaufortForce ?? 0);
+            const setsLabel = p7Source !== 'none'
+                ? (p7Source === 'pooled-wind' ? 'Community Data' : 'Historical Data')
+                : (matchScore.setsCompleted.length === 1 ? 'Set 1' : 'Sets 1 & 2');
+            const p7SourceNote = p7Source === 'personal-wind'
+                ? `Your own segments at Swingle ${swingleInt} here (n=${p7.side1Segments + p7.side2Segments}).`
+                : p7Source === 'pooled-wind'
+                ? `Community-pooled segments at Swingle ${swingleInt} here (n=${p7.side1Segments + p7.side2Segments}).`
+                : p7Source === 'personal-any'
+                ? `Your own segments across all wind conditions here (n=${p7.side1Segments + p7.side2Segments}) — no data yet at Swingle ${swingleInt}.`
+                : '';
             const fmt = n => (n >= 0 ? '+' : '') + n.toFixed(1);
             const col = n => n > 0.5 ? 'white' : n < -0.5 ? 'rgba(220,80,80,0.9)' : 'rgba(255,255,255,0.5)';
 
@@ -8683,6 +8953,7 @@
                 <!-- P7 BY SIDE -->
                 <div class="stat-box" style="border-left-color:rgba(255,255,255,0.2);">
                     <h3>📐 P7 BY SIDE — ${setsLabel}</h3>
+                    ${p7SourceNote ? `<div style="font-size:0.78em;opacity:0.55;margin-bottom:8px;">${p7SourceNote}</div>` : ''}
                     <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px;">
                         <div style="padding:10px;background:rgba(152,30,50,0.2);border-radius:6px;text-align:center;">
                             <div style="font-weight:bold;margin-bottom:2px;">${ctx.side1Name}</div>
@@ -9445,14 +9716,20 @@
         // Coin Toss calculator, Match Setup's Coin Toss tab) can get a real recommendation
         // from historical venue data before any live match/P7 data exists — same synthesis
         // math as the live path, just fed from calculateHistoricalP7StatsForVenue() instead
-        // of matchState. preMatch shape: { historicalP7Data, side1Name, side2Name, swingleScale }.
+        // of matchState. preMatch shape: { historicalP7Data, side1Name, side2Name, swingleScale,
+        // gameType, switchInterval, preferOverLive }. gameType/switchInterval default to a
+        // fresh 21-pt Set 1 ('normal'/7) when omitted; the Set 3 caller passes 'deciding'/5.
+        // preferOverLive lets wind-conditioned data win even when raw live P7 already
+        // exists (Set 3 guidance: prefer data matched to the CURRENT wind level over an
+        // unconditioned blend of sets 1 & 2, which is what calculateP7Stats() returns).
         function calculateCoinTossStrategies(venueId = null, preMatch = null) {
             // Calculate P7 (Points Per 7) for each side — prefer live match data;
-            // fall back to historical venue data when there's no live match yet.
+            // fall back to historical venue data when there's no live match yet, or when
+            // the caller explicitly wants wind-conditioned data to override the live blend.
             let p7Data = calculateP7Stats();
             let usingHistorical = false;
 
-            if (!p7Data.hasData && venueId && preMatch?.historicalP7Data?.hasData) {
+            if (venueId && preMatch?.historicalP7Data?.hasData && (!p7Data.hasData || preMatch.preferOverLive)) {
                 p7Data = preMatch.historicalP7Data;
                 usingHistorical = true;
             }
@@ -9474,18 +9751,20 @@
                 contextState = {
                     side1Name: preMatch.side1Name,
                     side2Name: preMatch.side2Name,
-                    gameType: 'normal',
-                    switchInterval: 7
+                    gameType: preMatch.gameType || 'normal',
+                    switchInterval: preMatch.switchInterval || (preMatch.gameType === 'deciding' ? 5 : 7)
                 };
             } else if (matchScore.setsCompleted.length > 0) {
                 const lastCompletedSet = matchScore.setsCompleted[matchScore.setsCompleted.length - 1];
                 contextState = lastCompletedSet.matchState;
             }
 
-            // isDeciding: check live context AND current setup selection.
-            // At coin-toss time before Set 3 starts, contextState is still from Set 2 ('regular').
-            // Historical/pre-match mode is always for a fresh Set 1 — never a deciding set.
-            const isDeciding = !usingHistorical && (contextState.gameType === 'deciding' || matchSetup?.gameType === 'deciding');
+            // isDeciding: check live context AND current setup selection. In historical/
+            // wind-conditioned mode this comes from the synthetic context's gameType
+            // (set 1 = 'normal' by default, Set 3's caller passes 'deciding').
+            const isDeciding = usingHistorical
+                ? contextState.gameType === 'deciding'
+                : (contextState.gameType === 'deciding' || matchSetup?.gameType === 'deciding');
             // Deciding sets switch every 5 points, not 7.
             // switchInterval MUST be 5 when isDeciding so that P5-scaled diffs compute
             // the correct per-point rate inside calculateNetSideAdvantage:
@@ -9771,7 +10050,12 @@
         // explicit currentTierFilter/currentVenueFilter pattern used elsewhere (Side
         // Advantage, Server Performance) — deliberately does NOT use matchSetup.competitionTier,
         // which is scoped to whatever match is currently being configured, not this query.
-        async function calculateHistoricalP7StatsForVenue(venueId, competitive = true) {
+        //
+        // swingleLevel (optional): when provided, only counts sets played under that
+        // exact Swingle Scale level at set start — "what actually happens on each side
+        // when it's this windy here," not an all-conditions blend. Pass null/omit for
+        // the original unconditioned behavior.
+        async function calculateHistoricalP7StatsForVenue(venueId, competitive = true, swingleLevel = null) {
             if (!currentUser || !venueId) return { hasData: false };
             try {
                 const snapshot = await db.collection('sets')
@@ -9786,6 +10070,12 @@
                     if (!d.complete) return;
                     if (d.includedInStats === false) return;
                     if (d.venueId !== venueId) return;
+                    if (swingleLevel !== null) {
+                        const setSwingle = Math.round(
+                            d.weatherAtSetStart?.swingleScale ?? d.weatherAtSetStart?.beaufortForce ?? NaN
+                        );
+                        if (setSwingle !== swingleLevel) return;
+                    }
                     if (competitive && !isCompetitiveSet(d.ourScore, d.theirScore, d.gameType === 'deciding' ? 15 : 21)) return;
                     const p7 = d.p7Stats;
                     if (!p7?.side1 || !p7?.side2) return;
