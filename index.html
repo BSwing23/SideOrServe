@@ -2735,6 +2735,30 @@
             }
         }
 
+        // Persistent venue picker shown once a recommendation is already displaying
+        // (the "New Match" Coin Toss landing screen defaults to the last-used venue,
+        // but the user needs to be able to change it right here, not just from the
+        // one-time noData picker which disappears once real data renders).
+        async function selectCoinTossVenue(selectEl) {
+            const venueId = selectEl.value;
+            if (!venueId || !venues[venueId]) return;
+            const venue = venues[venueId];
+            const container = selectEl.closest('#setupCoinTossContent') || null;
+            try {
+                const orientation = venue.orientation || 'North-South';
+                await fetchWeather(venue, orientation);
+                matchSetup.orientation = orientation;
+                matchSetup.venueName = venue.name;
+                matchSetup.venue = venueId;
+                localStorage.setItem('gasaBeach_lastVenue', venueId);
+                localStorage.setItem('gasaBeach_lastVenueName', venue.name);
+                localStorage.setItem('gasaBeach_lastOrientation', orientation);
+            } catch (e) {
+                console.error('[COIN TOSS] Venue change weather fetch error:', e);
+            }
+            updateCoinTossDisplay(container, venueId);
+        }
+
         async function fetchWeather(venue, overrideOrientation = null) {
             const apiKey = '375cb5070a5df8c1cec42204967cfb23';
             const { lat, lon } = venue.location;
@@ -8607,10 +8631,27 @@
             const content = targetEl || document.getElementById('coinTossContent');
 
             // Only the Match Setup flow (pre-match) continues on to player/role entry —
-            // the live in-match Coin Toss tab has no "next step" to continue to.
+            // the live in-match Coin Toss tab has no "next step" to continue to, and
+            // venue/home controls don't make sense once a match is actually underway.
             const isSetupFlow = content.id === 'setupCoinTossContent';
             const continueButton = isSetupFlow
                 ? `<button class="btn btn-primary" onclick="showSetupTab('setup', null)" style="width:100%;margin-top:12px;">Continue Match Setup</button>`
+                : '';
+            const homeButton = isSetupFlow
+                ? `<button class="btn btn-secondary" onclick="cancelMatchSetup()" style="width:100%;margin-top:8px;background:rgba(0,0,0,0.2);border:1px solid rgba(255,255,255,0.3);color:white;">Cancel / Home</button>`
+                : '';
+            // Persistent venue picker — "New Match" defaults to the last-used venue, but
+            // the user needs to be able to change it right here rather than only via the
+            // noData branch's one-time picker (which disappears once a recommendation
+            // renders). selectCoinTossVenue() re-fetches weather and re-renders on change.
+            const venuePicker = isSetupFlow
+                ? `<div style="margin-bottom:14px;">
+                        <label style="display:block;margin-bottom:4px;font-size:0.8em;opacity:0.7;">Venue:</label>
+                        <select onchange="selectCoinTossVenue(this)" style="width:100%;padding:8px;border-radius:6px;background:rgba(255,255,255,0.1);color:white;border:1px solid rgba(255,255,255,0.3);font-size:0.9em;">
+                            <option value="">-- Select Venue --</option>
+                            ${Object.entries(venues).map(([k,v]) => `<option value="${k}" ${k === matchSetup.venue ? 'selected' : ''}>${v.name}</option>`).join('')}
+                        </select>
+                    </div>`
                 : '';
 
             // Pre-match fallback: if there's no live P7 data yet, use historical data for
@@ -8658,7 +8699,8 @@
                         <button class="btn btn-primary" onclick="fetchCoinTossForTab()" style="width:100%;">Get Recommendation</button>
                         <div id="coinTossTabResult" style="margin-top:12px;"></div>
                     </div>
-                    ${continueButton}`;
+                    ${continueButton}
+                    ${homeButton}`;
                 if (matchSetup.venue) {
                     const sel = document.getElementById('coinTossTabVenue');
                     if (sel) sel.value = matchSetup.venue;
@@ -8706,13 +8748,17 @@
                 ? (receiveAdv.servePct - receiveAdv.receivePct) / 100 * projectedTotal
                 : 0;
 
-            // 4 permutations — net point advantage to YOUR team
-            const scenA_net = bestSideAdv + recAdvPts;  // win toss → take side, they receive
-            const scenB_net = recAdvPts + worseSideAdv; // win toss → receive, they take best side
-            const scenC_net = bestSideAdv - recAdvPts;  // lose toss → they serve, you take side
-            const scenD_net = recAdvPts + worseSideAdv; // lose toss → they take side, you receive
-
-            const winBest = scenA_net >= scenB_net ? 'A' : 'B';
+            // If you LOSE the toss, the opponent picks one axis (side, or serve/receive)
+            // and you get whatever's left on the other axis:
+            //   scenC: they pick serve/receive and rationally take receive for
+            //   themselves (it's the better option) — leftover choice (side) is yours,
+            //   so you take the better side, but you're stuck serving as a result.
+            //   Net = your side gain minus their receive advantage.
+            //   scenD: they pick side and take the better one — leftover choice
+            //   (serve/receive) is yours, so you receive, but you're stuck on the
+            //   worse side. Net = your receive advantage plus the worse side's cost.
+            const scenC_net = bestSideAdv - recAdvPts;
+            const scenD_net = recAdvPts + worseSideAdv;
 
             // Determine recommendation state from the extras engine results
             const currentSwingle = matchSetup.weather?.beaufortForce ?? 0;
@@ -8825,13 +8871,22 @@
             function scenRow(label, sublabel, net, isWin, isBest) {
                 const bg = isBest ? 'rgba(255,255,255,0.10)' : 'rgba(255,255,255,0.04)';
                 const border = isBest ? 'border-left:3px solid white;' : 'border-left:3px solid transparent;';
+                const textColor = col(net);
+                // Negative values render in muted crimson (rgba(220,80,80,0.9)) per the
+                // app's palette rules, but this box sits on .stat-box's crimson (#981E32)
+                // background — crimson text on a crimson-family background is illegible.
+                // A dark chip behind just the number fixes contrast without introducing
+                // a color outside the approved crimson/gray/white/black palette.
+                const numBg = textColor === 'rgba(220,80,80,0.9)'
+                    ? 'background:rgba(0,0,0,0.35);border-radius:4px;padding:2px 8px;'
+                    : '';
                 return `<div style="padding:10px 12px;border-radius:6px;margin-bottom:6px;background:${bg};${border}">
                     <div style="display:flex;justify-content:space-between;align-items:center;">
                         <div>
                             <div style="font-weight:bold;font-size:0.9em;">${label}</div>
                             <div style="font-size:0.8em;opacity:0.65;margin-top:2px;">${sublabel}</div>
                         </div>
-                        <div style="font-size:1.2em;font-weight:bold;color:${col(net)};min-width:52px;text-align:right;">${fmt(net)}</div>
+                        <div style="font-size:1.2em;font-weight:bold;color:${textColor};min-width:66px;text-align:right;${numBg}">${fmt(net)} pts</div>
                     </div>
                 </div>`;
             }
@@ -8889,6 +8944,7 @@
                 </div>` : '';
 
             let html = `
+                ${venuePicker}
                 <!-- HERO DIRECTIVE -->
                 <div style="text-align:center;padding:22px 16px 16px;margin-bottom:12px;">
                     <div style="font-size:1.75em;font-weight:900;letter-spacing:0.03em;color:${heroColor};line-height:1.15;margin-bottom:12px;">
@@ -8912,8 +8968,9 @@
                 <!-- IF YOU LOSE THE TOSS -->
                 <div class="stat-box" style="border-left-color:rgba(200,50,50,0.5);margin-bottom:12px;">
                     <h3 style="font-size:0.9em;opacity:0.8;margin-bottom:8px;">IF YOU LOSE THE TOSS</h3>
-                    ${scenRow('They serve → take ' + betterSide + ' side', betterSide + ' side · They receive', scenC_net, false, scenC_net >= scenD_net)}
-                    ${scenRow('They take ' + betterSide + ' → receive', 'Receive · ' + worseSide + ' side', scenD_net, false, scenD_net > scenC_net)}
+                    <div style="font-size:0.78em;opacity:0.6;margin-bottom:8px;">The toss winner picks one — side, or serve/receive — and you get whatever's left. Each row is your net point advantage for that outcome: positive helps you, negative helps them.</div>
+                    ${scenRow('They choose receive → you take ' + betterSide + ' side', 'You serve · ' + betterSide + ' side', scenC_net, false, scenC_net >= scenD_net)}
+                    ${scenRow('They choose ' + betterSide + ' side → you receive', 'You receive · ' + worseSide + ' side', scenD_net, false, scenD_net > scenC_net)}
                 </div>
 
                 <!-- P7 BY SIDE -->
@@ -8954,6 +9011,7 @@
             }
 
             html += continueButton;
+            html += homeButton;
 
             // This was missing entirely — html was built above but never written to the
             // DOM, so this whole recommendation view rendered blank whenever real P7 data
