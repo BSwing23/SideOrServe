@@ -739,9 +739,9 @@
         
         <!-- Tab Navigation -->
         <div style="display: flex; gap: 5px; margin-bottom: 20px; border-bottom: 2px solid rgba(255,255,255,0.2);">
-            <div class="match-tab active" onclick="showSetupTab('setup')">Setup</div>
-            <div class="match-tab" onclick="showSetupTab('weather')">Weather</div>
-            <div class="match-tab" onclick="showSetupTab('cointoss')">Coin Toss</div>
+            <div class="match-tab active" onclick="showSetupTab('setup', event)">Setup</div>
+            <div class="match-tab" onclick="showSetupTab('weather', event)">Weather</div>
+            <div class="match-tab" onclick="showSetupTab('cointoss', event)">Coin Toss</div>
         </div>
         
         <div id="matchErrorMessage" class="error hidden"></div>
@@ -2159,14 +2159,18 @@
             
             // Load previously used names for autocomplete
             loadNameAutocomplete();
-            
+
             // Load paired partners for match
             loadPairedPartnersForMatch();
-            
+
             // Update labels with player name
             updateMatchSetupLabels();
+
+            // Coin toss is the whole point of this app — lead with it. Player/role
+            // entry is secondary and happens after "Continue Match Setup".
+            showSetupTab('cointoss', null);
         }
-        
+
         function populateMatchSetupVenues() {
             const select = document.getElementById('venueName');
             let html = '';
@@ -2710,6 +2714,11 @@
                 matchSetup.weather = weatherData;
                 matchSetup.orientation = orientation;
                 matchSetup.venueName = venue.name;
+                // Carry this venue forward into Match Setup — one selection, not two
+                matchSetup.venue = venueId;
+                localStorage.setItem('gasaBeach_lastVenue', venueId);
+                localStorage.setItem('gasaBeach_lastVenueName', venue.name);
+                localStorage.setItem('gasaBeach_lastOrientation', orientation);
                 // Re-render into whichever container holds this form (setup tab or live match tab)
                 const _container = resultDiv?.closest('#setupCoinTossContent') || null;
                 updateCoinTossDisplay(_container, venueId);
@@ -3061,7 +3070,13 @@
                 updateSideOptions();
                 
                 // Fetch weather for this venue — store promise so startMatch() can wait for it
-                weatherFetchPromise = fetchWeather(venue).finally(() => { weatherFetchPromise = null; });
+                weatherFetchPromise = fetchWeather(venue).then(data => {
+                    // Coin Toss is the landing tab now — if it's showing, refresh once
+                    // weather resolves instead of leaving it stuck without wind data.
+                    const coinTossVisible = !document.getElementById('setupCoinTossTab')?.classList.contains('hidden');
+                    if (data && coinTossVisible) updateSetupCoinTossDisplay();
+                    return data;
+                }).finally(() => { weatherFetchPromise = null; });
             }
         }
 
@@ -6526,20 +6541,30 @@
             }
         }
         
-        function showSetupTab(tabName) {
-            // Update tab buttons in setup screen
+        function showSetupTab(tabName, clickEvent) {
+            // Update tab buttons in setup screen (clickEvent may be null when called programmatically)
             const setupTabs = document.querySelectorAll('#matchSetupScreen .match-tab');
             setupTabs.forEach(tab => tab.classList.remove('active'));
-            event.target.classList.add('active');
-            
+            const evtTarget = clickEvent?.target || (typeof event !== 'undefined' && event?.target);
+            if (evtTarget && evtTarget.classList && evtTarget.classList.contains('match-tab')) {
+                evtTarget.classList.add('active');
+            } else {
+                // Called programmatically — highlight correct tab by name
+                const tabMap = { setup: 0, weather: 1, cointoss: 2 };
+                if (setupTabs[tabMap[tabName]]) setupTabs[tabMap[tabName]].classList.add('active');
+            }
+
             // Hide all setup tab content
             document.getElementById('setupTab').classList.add('hidden');
             document.getElementById('setupWeatherTab').classList.add('hidden');
             document.getElementById('setupCoinTossTab').classList.add('hidden');
-            
+
             // Show selected tab
             if (tabName === 'setup') {
                 document.getElementById('setupTab').classList.remove('hidden');
+                // Venue may have been picked on the Coin Toss tab first — keep this in sync
+                const venueSel = document.getElementById('venueName');
+                if (venueSel && matchSetup.venue) venueSel.value = matchSetup.venue;
             } else if (tabName === 'weather') {
                 document.getElementById('setupWeatherTab').classList.remove('hidden');
                 updateSetupWeatherDisplay();
@@ -8360,6 +8385,13 @@
         async function updateCoinTossDisplay(targetEl, explicitVenueId) {
             const content = targetEl || document.getElementById('coinTossContent');
 
+            // Only the Match Setup flow (pre-match) continues on to player/role entry —
+            // the live in-match Coin Toss tab has no "next step" to continue to.
+            const isSetupFlow = content.id === 'setupCoinTossContent';
+            const continueButton = isSetupFlow
+                ? `<button class="btn btn-primary" onclick="showSetupTab('setup', null)" style="width:100%;margin-top:12px;">Continue Match Setup</button>`
+                : '';
+
             // Pre-match fallback: if there's no live P7 data yet, use historical data for
             // the configured venue so this shows a real recommendation instead of just a
             // venue picker. Live in-match behavior is untouched — calculateP7Stats().hasData
@@ -8399,7 +8431,8 @@
                         </div>
                         <button class="btn btn-primary" onclick="fetchCoinTossForTab()" style="width:100%;">Get Recommendation</button>
                         <div id="coinTossTabResult" style="margin-top:12px;"></div>
-                    </div>`;
+                    </div>
+                    ${continueButton}`;
                 if (matchSetup.venue) {
                     const sel = document.getElementById('coinTossTabVenue');
                     if (sel) sel.value = matchSetup.venue;
@@ -8683,7 +8716,13 @@
                 </div>`;
             }
 
-            
+            html += continueButton;
+
+            // This was missing entirely — html was built above but never written to the
+            // DOM, so this whole recommendation view rendered blank whenever real P7 data
+            // existed (live mid-match, and now the pre-match historical path too).
+            content.innerHTML = html;
+
             // Draw after DOM update
             if (matchSetup.weather) {
                 setTimeout(() => drawDriftSimulator('driftCanvas'), 50);
