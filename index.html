@@ -4544,7 +4544,9 @@
 
             // recAdvPts derived from observed data — same formula as calculateCoinTossStrategies
             const isDeciding = true; // Set 3 is always deciding
-            const rpStSet3 = userProfile?.rpStats?.sets15;
+            // Tier-aware with legacy fallback — see calculateCoinTossStrategies() for why.
+            const _s3Tier = matchSetup?.competitionTier || 'NCAA_Pro';
+            const rpStSet3 = (userProfile?.rpStats?.[_s3Tier] || userProfile?.rpStats)?.sets15;
             const projTotalSet3 = (rpStSet3?.competitiveCount > 0)
                 ? rpStSet3.totalPointsSum / rpStSet3.competitiveCount
                 : 28;
@@ -7173,8 +7175,10 @@
                         const d = doc.data();
                         if (!d.complete || d.venueId !== currentVenueFilter) return;
                         if (d.includedInStats === false) return;
-                        const _vTier = matchSetup.competitionTier;
-                        if (_vTier && d.competitionTier !== _vTier) return;
+                        // Use the Data tab's own tier filter, not the live match's tier
+                        // (matches the fix already applied to Side Advantage / Server
+                        // Performance in commit 4797b92 — this venue-RP-bucket site was missed).
+                        if (currentTierFilter !== 'all' && d.competitionTier !== currentTierFilter) return;
                         const margin = Math.abs((d.ourScore||0) - (d.theirScore||0));
                         const maxPts = d.gameType === 'deciding' ? 15 : 21;
                         if (competitive && margin >= (maxPts === 21 ? 6 : 5)) return;
@@ -7319,8 +7323,14 @@
             }
             
             // ── ALL SECTIONS — same for every scope/type permutation ────────
-            // Pull tier-specific rpStats bucket; fall back to legacy untiered root for pre-tier data
-            const _dataTier = matchSetup.competitionTier || 'NCAA_Pro';
+            // Pull tier-specific rpStats bucket; fall back to legacy untiered root for pre-tier data.
+            // Today/All Time scopes defer to the Data tab's own tier filter (when a specific tier
+            // is selected there) rather than the live match's tier — This Set/This Match scopes
+            // have no such filter, so they keep using the live match's tier.
+            const _histScopeForTier = currentDataScope === 'today' || currentDataScope === 'allTime';
+            const _dataTier = (_histScopeForTier && currentTierFilter !== 'all')
+                ? currentTierFilter
+                : (matchSetup.competitionTier || 'NCAA_Pro');
             const stats = userProfile?.rpStats?.[_dataTier] || userProfile?.rpStats;
             const isLiveScope = currentDataScope === 'thisSet' || currentDataScope === 'thisMatch';
             const isHistScope = currentDataScope === 'today' || currentDataScope === 'allTime';
@@ -7504,7 +7514,9 @@
         }
 
         function buildRPProjectionBox(displayState, displaySetup) {
-            const stats = userProfile?.rpStats;
+            // Tier-aware with legacy fallback — see calculateCoinTossStrategies() for why.
+            const _rpbTier = displaySetup?.competitionTier || matchSetup?.competitionTier || 'NCAA_Pro';
+            const stats = userProfile?.rpStats?.[_rpbTier] || userProfile?.rpStats;
             const setType = displayState.gameType === 'deciding' ? stats?.sets15 : stats?.sets21;
             const hasData = setType && setType.losers.count > 0;
             if (!hasData) return '';
@@ -8714,7 +8726,9 @@
             const switchInterval = ctx.switchInterval || 7;
             // Use observed average total points — same source as calculateCoinTossStrategies
             const isDecidingDisp = isSet3 || ctx.gameType === 'deciding';
-            const rpStatsDisp = userProfile?.rpStats;
+            // Tier-aware with legacy fallback — see calculateCoinTossStrategies() for why.
+            const _ctDispTier = matchSetup?.competitionTier || 'NCAA_Pro';
+            const rpStatsDisp = userProfile?.rpStats?.[_ctDispTier] || userProfile?.rpStats;
             const stDisp = isDecidingDisp ? rpStatsDisp?.sets15 : rpStatsDisp?.sets21;
             const projectedTotal = (stDisp?.competitiveCount > 0)
                 ? stDisp.totalPointsSum / stDisp.competitiveCount
@@ -9797,7 +9811,10 @@
             const switchInterval = isDeciding ? 5 : (contextState.switchInterval || 7);
 
             // Project total points from observed average — no hardcoded assumptions
-            const rpStats = userProfile?.rpStats;
+            // Tier-aware with legacy fallback — rpStats is namespaced under competitionTier
+            // (see updateRPStats()); this read site was missed when that write path shipped.
+            const _cctTier = matchSetup?.competitionTier || 'NCAA_Pro';
+            const rpStats = userProfile?.rpStats?.[_cctTier] || userProfile?.rpStats;
             const st = isDeciding ? rpStats?.sets15 : rpStats?.sets21;
             const projectedTotal = (st?.competitiveCount > 0)
                 ? st.totalPointsSum / st.competitiveCount
