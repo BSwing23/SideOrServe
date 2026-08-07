@@ -4557,18 +4557,36 @@
                 ? `${receiveAdv.advantagePct.toFixed(1)}% easier to receive`
                 : 'no receive data yet';
 
-            // Side advantage for Set 3 (15-pt, P5-scaled)
+            // Side advantage for Set 3 (15-pt, P5-scaled). betterSide/worseSide just
+            // need the ORDERING of advStartingSide1/2, which is fine to use raw (a
+            // shared baseline added to both doesn't change which one is bigger). But
+            // the MAGNITUDE compared against recAdvPts must be the isolated tail-rally
+            // swing (strategies.extrasAdvantage), not the raw advStartingSide1/2 value —
+            // that also carries a baseline from full alternating segments, identical
+            // regardless of starting side and irrelevant to the coin-toss decision.
+            // Using the raw value here would let a big, unrelated baseline wrongly
+            // tip "sideWins" one way or the other.
             const sideAdv1 = strategies.advStartingSide1;
             const sideAdv2 = strategies.advStartingSide2;
             const betterSide = sideAdv1 >= sideAdv2 ? ctx.side1Name : ctx.side2Name;
             const worseSide  = sideAdv1 >= sideAdv2 ? ctx.side2Name : ctx.side1Name;
-            const bestAdv    = Math.max(sideAdv1, sideAdv2);
+            const bestAdv    = (strategies.extrasAdvantage || 0) / 2;
+
+            // Which side to actually START on — NOT always betterSide. The quotient of
+            // (projected total points / switch interval — 5 for this 15-pt deciding set)
+            // determines whether the team finishes on the side they started (even
+            // quotient) or the opposite side (odd quotient). When odd, you want to
+            // START on the worse side so the tail-rally remainder lands on the better
+            // one at the end. strategies.preferredStartSide already accounts for this;
+            // using betterSide directly here would recommend the wrong side whenever
+            // the quotient is odd.
+            const preferredStartSideS3 = strategies.preferredStartSide || betterSide;
 
             // Direct comparison: which standalone advantage is larger?
             // Also apply the priority tree — side only beats receive if Swingle >= 4
             const currentSwingle = matchSetup.weather?.beaufortForce ?? 0;
             const sideWins = bestAdv > recAdvPts && currentSwingle >= 4;
-            const winBest = sideWins ? `Take ${betterSide} side` : `Receive first`;
+            const winBest = sideWins ? `Take ${preferredStartSideS3} side` : `Receive first`;
 
             const fmt = n => (n >= 0 ? '+' : '') + n.toFixed(1);
 
@@ -4594,7 +4612,7 @@
                             They choose side → <strong>Receive first</strong>
                         </div>
                         <div style="padding:7px 10px;background:rgba(255,255,255,0.18);border-radius:5px;color:white;">
-                            They choose serve → <strong>Take ${betterSide} side</strong>
+                            They choose serve → <strong>Take ${preferredStartSideS3} side</strong>
                         </div>
                     </div>
                 </div>`;
