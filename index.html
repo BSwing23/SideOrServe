@@ -8770,14 +8770,24 @@
             const sideAdv2 = calculateNetSideAdvantage(ctx.side2Name, p7.p7DiffSide1 * p5ScaleDisp, p7.p7DiffSide2 * p5ScaleDisp, projectedTotal, switchInterval, ctx);
             const betterSide = sideAdv1 >= sideAdv2 ? ctx.side1Name : ctx.side2Name;
             const worseSide  = sideAdv1 >= sideAdv2 ? ctx.side2Name : ctx.side1Name;
-            const bestSideAdv = Math.max(sideAdv1, sideAdv2);
-            const worseSideAdv = Math.min(sideAdv1, sideAdv2);
 
             // Receive advantage in point terms — no /10 assumption, derived from observed data
             const receiveAdv = strategies.receiveAdv;
             const recAdvPts = receiveAdv
                 ? (receiveAdv.servePct - receiveAdv.receivePct) / 100 * projectedTotal
                 : 0;
+
+            // The "side penalty" here must be ONLY the tail-rally swing, not the raw
+            // calculateNetSideAdvantage() value (sideAdv1/sideAdv2 above) — that also
+            // includes a baseline from the full alternating segments, which is the SAME
+            // regardless of which side you start on and has nothing to do with the
+            // coin-toss decision. strategies.extrasAdvantage is already exactly the
+            // isolated figure: (bad-side P7 differential / switchInterval) × tail-rally
+            // points — the actual marginal cost of ending up on the worse side. Split
+            // it in half so "best" and "worse" are symmetric around zero (no baseline).
+            const halfTailSwing = (strategies.extrasAdvantage || 0) / 2;
+            const bestSideAdv = halfTailSwing;
+            const worseSideAdv = -halfTailSwing;
 
             // If you LOSE the toss, the opponent picks one axis (side, or serve/receive)
             // and you get whatever's left on the other axis:
