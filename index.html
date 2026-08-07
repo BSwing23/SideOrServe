@@ -7182,42 +7182,7 @@
             if (_tierFilterRow) _tierFilterRow.style.display = _tierFilterVisible ? 'block' : 'none';
             if (!_tierFilterVisible) currentTierFilter = 'all';
 
-            // Pre-compute venue-filtered RP buckets (All Time + specific venue)
-            if (currentDataScope === 'allTime' && currentVenueFilter !== 'all' && currentUser) {
-                try {
-                    const _vsnap = await db.collection('sets').where('userId', '==', currentUser.uid).limit(500).get();
-                    const vb21 = { count:0, ourRPs:0, oppRPs:0, winRPs:0, winCount:0, loseRPs:0, loseCount:0 };
-                    const vb15 = { count:0, ourRPs:0, oppRPs:0, winRPs:0, winCount:0, loseRPs:0, loseCount:0 };
-                    let _venueName = currentVenueFilter;
-                    _vsnap.docs.forEach(doc => {
-                        const d = doc.data();
-                        if (!d.complete || d.venueId !== currentVenueFilter) return;
-                        if (d.includedInStats === false) return;
-                        // Use the Data tab's own tier filter, not the live match's tier
-                        // (matches the fix already applied to Side Advantage / Server
-                        // Performance in commit 4797b92 — this venue-RP-bucket site was missed).
-                        if (currentTierFilter !== 'all' && d.competitionTier !== currentTierFilter) return;
-                        const margin = Math.abs((d.ourScore||0) - (d.theirScore||0));
-                        const maxPts = d.gameType === 'deciding' ? 15 : 21;
-                        if (competitive && margin >= (maxPts === 21 ? 6 : 5)) return;
-                        if (d.venue) _venueName = d.venue;
-                        const vb = d.gameType === 'deciding' ? vb15 : vb21;
-                        const weWon = (d.ourScore||0) > (d.theirScore||0);
-                        const ourRPs = d.ourRealPoints||0, theirRPs = d.theirRealPoints||0;
-                        vb.count++; vb.ourRPs += ourRPs; vb.oppRPs += theirRPs;
-                        if (weWon) { vb.winRPs += ourRPs; vb.winCount++; vb.loseRPs += theirRPs; vb.loseCount++; }
-                        else       { vb.winRPs += theirRPs; vb.winCount++; vb.loseRPs += ourRPs; vb.loseCount++; }
-                    });
-                    window._venueRPBuckets = { b21: vb21, b15: vb15, venueName: _venueName };
-                } catch(e) {
-                    console.error('[VENUE RP]', e);
-                    window._venueRPBuckets = null;
-                }
-            } else {
-                window._venueRPBuckets = null;
-            }
-
-            const inMatch = matchState && matchState.servers && 
+            const inMatch = matchState && matchState.servers &&
                             (matchState.ourScore > 0 || matchState.theirScore > 0 || matchScore.setsCompleted.length > 0);
             
             // Determine display state for live section
@@ -7638,11 +7603,8 @@
             }
 
             // ── ALL TIME ──
-            // Venue-filtered: use pre-computed venue RP buckets from updateDataTab()
-            if (currentVenueFilter !== 'all' && window._venueRPBuckets) {
-                const vn = window._venueRPBuckets.venueName || currentVenueFilter;
-                return tableFromSets(window._venueRPBuckets.b21, window._venueRPBuckets.b15, vn);
-            }
+            // Real Points reflect serve/receive dynamics, not venue/wind effects —
+            // always the full tier-scoped baseline, never filtered by currentVenueFilter.
             if (!stats) return `<div class="stat-box"><h3>📊 RP AVERAGES — ALL TIME</h3><div style="opacity:0.6;padding:10px;font-size:0.9em;">Complete sets to build your RP history.</div></div>`;
             const s21 = stats.sets21, s15 = stats.sets15;
             const at21 = { count:s21.ourTeam.count, ourRPs:s21.ourTeam.totalRPs, oppRPs:s21.opponents.totalRPs, winRPs:s21.winners.totalRPs, winCount:s21.winners.count, loseRPs:s21.losers.totalRPs, loseCount:s21.losers.count };
