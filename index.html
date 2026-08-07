@@ -9712,7 +9712,14 @@
             if (userProfile?.rpStats) {
                 const tier = matchSetup?.competitionTier || 'NCAA_Pro';
                 const tierStats = userProfile.rpStats[tier] || userProfile.rpStats;
-                const isDeciding = matchState?.gameType === 'deciding';
+                // Check matchSetup too, not just matchState: during Set 3 setup (before
+                // "Start Set 3" is clicked and initializeLiveMatch() runs), matchState is
+                // still Set 2's leftover state ('normal'), but matchSetup.gameType has
+                // already been set to 'deciding' by startNextSet(). Without this, Set 3's
+                // guidance pulled the receive advantage from the 21-pt bucket instead of
+                // the 15-pt one, understating the (larger) receive-first advantage that
+                // comes from a smaller RP-to-win target.
+                const isDeciding = matchState?.gameType === 'deciding' || matchSetup?.gameType === 'deciding';
                 const bucket = isDeciding ? tierStats.sets15 : tierStats.sets21;
                 if (bucket?.losers?.count >= 1) {
                     const avg = bucket.losers.totalRPs / bucket.losers.count;
@@ -9724,8 +9731,9 @@
                 }
             }
 
-            // No all-time data yet — check current match in-memory sets
-            const isDeciding = matchState?.gameType === 'deciding';
+            // No all-time data yet — check current match in-memory sets.
+            // Same matchSetup fallback as above (Set 3 setup, matchState still stale).
+            const isDeciding = matchState?.gameType === 'deciding' || matchSetup?.gameType === 'deciding';
             const inMemorySets = matchScore?.setsCompleted || [];
             let totalRPs = 0, loserCount = 0;
             inMemorySets.forEach(s => {
