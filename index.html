@@ -8763,7 +8763,6 @@
                 ? `Your own segments across all wind conditions here (n=${p7.side1Segments + p7.side2Segments}) — no data yet at Swingle ${swingleInt}.`
                 : '';
             const fmt = n => (n >= 0 ? '+' : '') + n.toFixed(1);
-            const col = n => n > 0.5 ? 'white' : n < -0.5 ? 'rgba(220,80,80,0.9)' : 'rgba(255,255,255,0.5)';
 
             // Net point advantage — scale P7 to P5 for deciding sets
             const p5ScaleDisp = isDecidingDisp ? (5 / 7) : 1;
@@ -8903,22 +8902,13 @@
             function scenRow(label, sublabel, net, isWin, isBest) {
                 const bg = isBest ? 'rgba(255,255,255,0.10)' : 'rgba(255,255,255,0.04)';
                 const border = isBest ? 'border-left:3px solid white;' : 'border-left:3px solid transparent;';
-                const textColor = col(net);
-                // Negative values render in muted crimson (rgba(220,80,80,0.9)) per the
-                // app's palette rules, but this box sits on .stat-box's crimson (#981E32)
-                // background — crimson text on a crimson-family background is illegible.
-                // A dark chip behind just the number fixes contrast without introducing
-                // a color outside the approved crimson/gray/white/black palette.
-                const numBg = textColor === 'rgba(220,80,80,0.9)'
-                    ? 'background:rgba(0,0,0,0.35);border-radius:4px;padding:2px 8px;'
-                    : '';
                 return `<div style="padding:10px 12px;border-radius:6px;margin-bottom:6px;background:${bg};${border}">
                     <div style="display:flex;justify-content:space-between;align-items:center;">
                         <div>
                             <div style="font-weight:bold;font-size:0.9em;">${label}</div>
                             <div style="font-size:0.8em;opacity:0.65;margin-top:2px;">${sublabel}</div>
                         </div>
-                        <div style="font-size:1.2em;font-weight:bold;color:${textColor};min-width:66px;text-align:right;${numBg}">${fmt(net)} pts</div>
+                        <div style="font-size:1.2em;font-weight:bold;color:white;min-width:66px;text-align:right;">${fmt(net)} pts</div>
                     </div>
                 </div>`;
             }
