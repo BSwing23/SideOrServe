@@ -1748,10 +1748,10 @@
             const { p7Data: historicalP7Data, source: p7Source } = venueKey
                 ? await resolveWindConditionedP7Data(venueKey, quickTier, beaufortLevel, sides[0], sides[1])
                 : { p7Data: { hasData: false }, source: 'none' };
-            // Pooled side-strength ratios (much larger, both-teams, all-wind-levels
-            // sample) — used to decompose the team's own thin same-side P7 sample.
-            // See calculatePooledSideRatios() / calculateCoinTossStrategies().
-            const pooledSideRatios = venueKey ? await calculatePooledSideRatios(venueKey, true) : null;
+            // Pooled side-strength ratios — confidence-graduated fallback (same venue/wind
+            // → same wind any venue with this orientation → same venue any wind → thinnest
+            // available). See calculatePooledSideRatios() / calculateCoinTossStrategies().
+            const pooledSideRatios = venueKey ? await calculatePooledSideRatios(venueKey, orientation, beaufortLevel, true) : null;
             const strategies = calculateCoinTossStrategies(venueKey, {
                 historicalP7Data,
                 side1Name: sides[0],
@@ -1811,6 +1811,7 @@
                         p7Source === 'pooled-wind'   ? `Based on ${historicalP7Data.side1Segments + historicalP7Data.side2Segments} community-pooled segments at Swingle ${beaufortLevel} here.` :
                         `Based on ${historicalP7Data.side1Segments + historicalP7Data.side2Segments} of your own segments across all wind conditions here (no data yet at Swingle ${beaufortLevel}).`
                     }</div>` : ''}
+                    ${pooledSideRatios?.label ? `<div style="font-size:0.78em; opacity:0.55; text-align:center; margin-top:2px;">Side strength: ${pooledSideRatios.label}</div>` : ''}
                 `;
             }
 
@@ -4518,10 +4519,11 @@
             const tier = matchSetup.competitionTier || 'NCAA_Pro';
             const swingleLevel = Math.round(matchSetup.weather?.beaufortForce ?? 0);
             const resolved = await resolveWindConditionedP7Data(venueId, tier, swingleLevel, sides[0], sides[1]);
-            // Pooled side-strength ratios (much larger, both-teams, all-wind-levels
-            // sample) — used to decompose the team's own thin same-side P7 sample.
-            // See calculatePooledSideRatios() / calculateCoinTossStrategies().
-            const pooledSideRatios = await calculatePooledSideRatios(venueId, true);
+            // Pooled side-strength ratios — confidence-graduated fallback (same venue/wind
+            // → same wind any venue with this orientation → same venue any wind → thinnest
+            // available). See calculatePooledSideRatios() / calculateCoinTossStrategies().
+            const orientationS3 = prevSetup.orientation || 'North-South';
+            const pooledSideRatios = await calculatePooledSideRatios(venueId, orientationS3, swingleLevel, true);
 
             // Build coin toss recommendation from match data
             const strategies = calculateCoinTossStrategies(venueId, {
@@ -4616,6 +4618,7 @@
                             Side adv: ${fmt(bestAdv)} · Receive adv: ${fmt(recAdvPts)} · ${recAdvText}
                         </div>
                         ${p7SourceNote ? `<div style="font-size:0.7em;color:#000;opacity:0.5;margin-top:4px;">${p7SourceNote}</div>` : ''}
+                        ${pooledSideRatios?.label ? `<div style="font-size:0.7em;color:#000;opacity:0.5;margin-top:2px;">Side strength: ${pooledSideRatios.label}</div>` : ''}
                     </div>
                     <div style="font-size:0.82em;display:flex;flex-direction:column;gap:5px;">
                         <div style="padding:7px 10px;background:rgba(255,255,255,0.18);border-radius:5px;color:white;">
@@ -4626,7 +4629,7 @@
                         </div>
                     </div>
                 </div>`;
-        }        
+        }
         function set3SelectServing(team, el) {
             set3State.servingTeam = team;
             document.querySelectorAll('#set3Q1Group .role-option').forEach(e => e.classList.remove('selected'));
@@ -8663,16 +8666,18 @@
             const venueId = explicitVenueId || matchSetup.venue || null;
             let preMatch = null;
             let p7Source = 'none';
+            let pooledSideRatios = null;
             if (venueId) {
                 const orientation = matchSetup.orientation || venues[venueId]?.orientation || 'North-South';
                 const sides = orientation.split('-');
                 const tier = matchSetup.competitionTier || 'NCAA_Pro';
-                // Pooled side-strength ratios (much larger, both-teams, all-wind-levels
-                // sample) — used to decompose the team's own thin same-side P7 sample.
-                // See calculatePooledSideRatios() / calculateCoinTossStrategies().
-                const pooledSideRatios = await calculatePooledSideRatios(venueId, true);
+                const swingleLevel = Math.round(matchSetup.weather?.beaufortForce ?? 0);
+                // Pooled side-strength ratios — confidence-graduated fallback (same
+                // venue/wind → same wind any venue with this orientation → same venue
+                // any wind → thinnest available). See calculatePooledSideRatios() /
+                // calculateCoinTossStrategies().
+                pooledSideRatios = await calculatePooledSideRatios(venueId, orientation, swingleLevel, true);
                 if (!calculateP7Stats().hasData) {
-                    const swingleLevel = Math.round(matchSetup.weather?.beaufortForce ?? 0);
                     const resolved = await resolveWindConditionedP7Data(venueId, tier, swingleLevel, sides[0], sides[1]);
                     p7Source = resolved.source;
                     preMatch = {
@@ -8993,6 +8998,7 @@
                 <div class="stat-box" style="border-left-color:rgba(255,255,255,0.2);">
                     <h3>📐 P7 BY SIDE — ${setsLabel}</h3>
                     ${p7SourceNote ? `<div style="font-size:0.78em;opacity:0.55;margin-bottom:8px;">${p7SourceNote}</div>` : ''}
+                    ${pooledSideRatios?.label ? `<div style="font-size:0.78em;opacity:0.55;margin-bottom:8px;">Side strength: ${pooledSideRatios.label}</div>` : ''}
                     <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px;">
                         <div style="padding:10px;background:rgba(152,30,50,0.2);border-radius:6px;text-align:center;">
                             <div style="font-weight:bold;margin-bottom:2px;">${ctx.side1Name}</div>
@@ -10205,6 +10211,70 @@
             }
         }
 
+        // Orientation-generalized counterpart to calculateHistoricalP7StatsForVenue() —
+        // pools this user's own segments across ALL venues sharing the given orientation
+        // string (e.g. 'North-South'), not a single venueId. Wind effects generalize
+        // across similarly-oriented courts more reliably than across different
+        // orientations, so this is a legitimate broader sample when a single venue's own
+        // history is thin. Used only by calculatePooledSideRatios()'s MEDIUM-confidence
+        // tier — side1/side2 naming stays consistent across pooled venues because the
+        // same orientation string always splits into the same side1Name/side2Name order.
+        async function calculateHistoricalP7StatsByOrientation(orientation, competitive = true, swingleLevel = null) {
+            if (!orientation) return { hasData: false };
+            try {
+                const side1Stats = { our: [], their: [] };
+                const side2Stats = { our: [], their: [] };
+                const processedSetIds = new Set();
+
+                const matchesSwingle = (weatherAtSetStart) => {
+                    if (swingleLevel === null) return true;
+                    const setSwingle = Math.round(
+                        weatherAtSetStart?.swingleScale ?? weatherAtSetStart?.beaufortForce ?? NaN
+                    );
+                    return setSwingle === swingleLevel;
+                };
+
+                if (currentUser) {
+                    const snapshot = await db.collection('sets')
+                        .where('userId', '==', currentUser.uid)
+                        .limit(500).get();
+
+                    snapshot.docs.forEach(doc => {
+                        const d = doc.data();
+                        if (!d.complete) return;
+                        if (d.includedInStats === false) return;
+                        if (d.orientation !== orientation) return;
+                        if (!matchesSwingle(d.weatherAtSetStart)) return;
+                        if (competitive && !isCompetitiveSet(d.ourScore, d.theirScore, d.gameType === 'deciding' ? 15 : 21)) return;
+                        const p7 = d.p7Stats;
+                        if (!p7?.side1 || !p7?.side2) return;
+                        processedSetIds.add(doc.id);
+                        side1Stats.our   = side1Stats.our.concat(p7.side1.our   || []);
+                        side1Stats.their = side1Stats.their.concat(p7.side1.their || []);
+                        side2Stats.our   = side2Stats.our.concat(p7.side2.our   || []);
+                        side2Stats.their = side2Stats.their.concat(p7.side2.their || []);
+                    });
+                }
+
+                (matchScore.setsCompleted || []).forEach(set => {
+                    if (set.setId && processedSetIds.has(set.setId)) return;
+                    if (set.matchSetup?.orientation !== orientation) return;
+                    if (!matchesSwingle(set.matchState?.weatherAtSetStart)) return;
+                    const setP7 = set.matchState?.p7Stats;
+                    if (!setP7) return;
+                    side1Stats.our   = side1Stats.our.concat(setP7.side1.our);
+                    side1Stats.their = side1Stats.their.concat(setP7.side1.their);
+                    side2Stats.our   = side2Stats.our.concat(setP7.side2.our);
+                    side2Stats.their = side2Stats.their.concat(setP7.side2.their);
+                });
+
+                return computeP7StatsFromSides(side1Stats, side2Stats);
+            } catch(e) {
+                console.error('[COIN TOSS] Orientation-based historical P7 query error:', e);
+                return { hasData: false };
+            }
+        }
+
         // Pooled side-strength ratio: % of points won by whoever stands on a given side,
         // combining BOTH teams' performance there (not just one team's own record) — the
         // exact same "Side advantage (pooled)" formula shown in buildSideAdvantageSection(),
@@ -10219,25 +10289,82 @@
             return pooledTotal > 0 ? (pooledThis / pooledTotal * 100) : null;
         }
 
-        // Pooled side-strength ratios for both sides at a venue, drawn from ALL of this
-        // user's own sets there — every wind level, both teams combined via
-        // calculatePooledSideRatioPct() — a much larger sample than the wind-conditioned
-        // P7 data used for the team's own scoring rate. Used by calculateCoinTossStrategies()
-        // to decompose its p7DiffSide1/p7DiffSide2 inputs into: team's own overall P7 rate ×
-        // (this side's pooled ratio / 50), instead of substituting the team's own thin
-        // same-side sample directly (see calculatePooledSideRatioPct for the shared formula).
-        // Returns { side1, side2 } (each 0-100 or null) or null if there's no data at all yet.
-        async function calculatePooledSideRatios(venueId, competitive) {
-            if (!venueId) return null;
-            const p7 = await calculateHistoricalP7StatsForVenue(venueId, competitive, null);
-            if (!p7.hasData) return null;
+        // Minimum segments (both sides combined) for a tier to be trusted on its own —
+        // matches sampleDisclaimer()'s existing n<=2 "very early, not yet reliable"
+        // cutoff, so this is consistent with how thin samples are already flagged
+        // elsewhere in the app rather than inventing a new threshold.
+        const MIN_SEGMENTS_FOR_SIDE_RATIO_CONFIDENCE = 3;
+
+        // Pooled side-strength ratios for both sides, resolved through a confidence-
+        // graduated fallback instead of refusing to answer when same-venue/same-wind data
+        // is thin. Coaches need a call by Set 3, when only 1-2 sets of data usually exist
+        // — silence at that point isn't acceptable, but neither is fabricating a number.
+        // Tries, in order, the first source with at least
+        // MIN_SEGMENTS_FOR_SIDE_RATIO_CONFIDENCE total segments:
+        //   1. HIGH   — same venue, same Swingle Level
+        //   2. MEDIUM — same Swingle Level, any venue sharing this venue's orientation
+        //               (wind effects generalize across similarly-oriented courts more
+        //               reliably than across different ones)
+        //   3. LOW    — same venue, any Swingle Level (venue-specific, not wind-matched)
+        // If none of those clear the bar, falls back to whichever of the three tried
+        // sources has the most (still real, just thin) data — VERY LOW confidence, but
+        // still real observed segments, never a fabricated number. Returns
+        // { side1, side2, confidence, sampleSize, label } or null if there's no data
+        // in any tier at all. label is a ready-to-display sentence naming the tier and
+        // sample size, so callers never silently use a broader tier without saying so.
+        async function calculatePooledSideRatios(venueId, orientation, swingleLevel, competitive) {
+            if (!venueId && !orientation) return null;
+
+            const segCount = p7 => (p7?.hasData ? (p7.side1Segments + p7.side2Segments) : 0);
+            const tiers = [];
+            if (venueId) {
+                tiers.push({
+                    confidence: 'high',
+                    p7: await calculateHistoricalP7StatsForVenue(venueId, competitive, swingleLevel),
+                    label: n => `Based on ${n} segments at this venue at similar wind conditions (high confidence).`
+                });
+            }
+            if (orientation) {
+                tiers.push({
+                    confidence: 'medium',
+                    p7: await calculateHistoricalP7StatsByOrientation(orientation, competitive, swingleLevel),
+                    label: n => `Based on ${n} segments at similar wind conditions across ${orientation} venues (medium confidence).`
+                });
+            }
+            if (venueId) {
+                tiers.push({
+                    confidence: 'low',
+                    p7: await calculateHistoricalP7StatsForVenue(venueId, competitive, null),
+                    label: n => `Based on ${n} segments at this venue, mixed wind conditions (low confidence).`
+                });
+            }
+
+            let chosen = tiers.find(t => segCount(t.p7) >= MIN_SEGMENTS_FOR_SIDE_RATIO_CONFIDENCE);
+            if (!chosen) {
+                // VERY LOW confidence: none of the tiers cleared the bar — use whichever
+                // has the most (still real) data rather than refusing to answer.
+                tiers.forEach(t => {
+                    if (segCount(t.p7) > 0 && (!chosen || segCount(t.p7) > segCount(chosen.p7))) chosen = t;
+                });
+                if (chosen) {
+                    const n = segCount(chosen.p7);
+                    chosen = { ...chosen, confidence: 'verylow', label: () => `Based on ${n} segments — very low confidence, treat as a rough guide only.` };
+                }
+            }
+            if (!chosen) return null;
+
+            const p7 = chosen.p7;
+            const n = segCount(p7);
             const ourSide1   = p7.avgOurSide1   * p7.side1Segments;
             const theirSide1 = p7.avgTheirSide1 * p7.side1Segments;
             const ourSide2   = p7.avgOurSide2   * p7.side2Segments;
             const theirSide2 = p7.avgTheirSide2 * p7.side2Segments;
             return {
                 side1: calculatePooledSideRatioPct(ourSide1, theirSide1, ourSide2, theirSide2),
-                side2: calculatePooledSideRatioPct(ourSide2, theirSide2, ourSide1, theirSide1)
+                side2: calculatePooledSideRatioPct(ourSide2, theirSide2, ourSide1, theirSide1),
+                confidence: chosen.confidence,
+                sampleSize: n,
+                label: chosen.label(n)
             };
         }
 
