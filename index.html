@@ -1748,11 +1748,16 @@
             const { p7Data: historicalP7Data, source: p7Source } = venueKey
                 ? await resolveWindConditionedP7Data(venueKey, quickTier, beaufortLevel, sides[0], sides[1])
                 : { p7Data: { hasData: false }, source: 'none' };
+            // Pooled side-strength ratios (much larger, both-teams, all-wind-levels
+            // sample) — used to decompose the team's own thin same-side P7 sample.
+            // See calculatePooledSideRatios() / calculateCoinTossStrategies().
+            const pooledSideRatios = venueKey ? await calculatePooledSideRatios(venueKey, true) : null;
             const strategies = calculateCoinTossStrategies(venueKey, {
                 historicalP7Data,
                 side1Name: sides[0],
                 side2Name: sides[1],
-                swingleScale: beaufortLevel
+                swingleScale: beaufortLevel,
+                pooledSideRatios
             });
 
             const windNote = windAnalysis.crosswind
@@ -4513,6 +4518,10 @@
             const tier = matchSetup.competitionTier || 'NCAA_Pro';
             const swingleLevel = Math.round(matchSetup.weather?.beaufortForce ?? 0);
             const resolved = await resolveWindConditionedP7Data(venueId, tier, swingleLevel, sides[0], sides[1]);
+            // Pooled side-strength ratios (much larger, both-teams, all-wind-levels
+            // sample) — used to decompose the team's own thin same-side P7 sample.
+            // See calculatePooledSideRatios() / calculateCoinTossStrategies().
+            const pooledSideRatios = await calculatePooledSideRatios(venueId, true);
 
             // Build coin toss recommendation from match data
             const strategies = calculateCoinTossStrategies(venueId, {
@@ -4522,7 +4531,8 @@
                 swingleScale: swingleLevel,
                 gameType: 'deciding',
                 switchInterval: 5,
-                preferOverLive: true
+                preferOverLive: true,
+                pooledSideRatios
             });
             const ctBox = document.getElementById('set3CoinTossGuidance');
             if (!ctBox) return;
@@ -8085,10 +8095,8 @@
                         // When opponents are on this side (your team on opposite), opponents score oppSp.their.
                         const oppKey = getOppSide(side);
                         const oppSp = oppKey ? sidePoints[oppKey] : null;
-                        const pooledThis = sp.our + (oppSp ? oppSp.their : 0);
-                        const pooledOther = sp.their + (oppSp ? oppSp.our : 0);
-                        const pooledTotal = pooledThis + pooledOther;
-                        const pooledPct = pooledTotal > 0 ? (pooledThis / pooledTotal * 100).toFixed(1) : null;
+                        const pooledRatio = calculatePooledSideRatioPct(sp.our, sp.their, oppSp ? oppSp.our : 0, oppSp ? oppSp.their : 0);
+                        const pooledPct = pooledRatio !== null ? pooledRatio.toFixed(1) : null;
                         // Team-specific breakdown (your team's record while on this side)
                         const totalPts = sp.our + sp.their;
                         const ourPct = totalPts > 0 ? (sp.our / totalPts * 100).toFixed(1) : '—';
@@ -8655,19 +8663,28 @@
             const venueId = explicitVenueId || matchSetup.venue || null;
             let preMatch = null;
             let p7Source = 'none';
-            if (!calculateP7Stats().hasData && venueId) {
+            if (venueId) {
                 const orientation = matchSetup.orientation || venues[venueId]?.orientation || 'North-South';
                 const sides = orientation.split('-');
-                const swingleLevel = Math.round(matchSetup.weather?.beaufortForce ?? 0);
                 const tier = matchSetup.competitionTier || 'NCAA_Pro';
-                const resolved = await resolveWindConditionedP7Data(venueId, tier, swingleLevel, sides[0], sides[1]);
-                p7Source = resolved.source;
-                preMatch = {
-                    historicalP7Data: resolved.p7Data,
-                    side1Name: sides[0],
-                    side2Name: sides[1],
-                    swingleScale: matchSetup.weather?.beaufortForce ?? 0
-                };
+                // Pooled side-strength ratios (much larger, both-teams, all-wind-levels
+                // sample) — used to decompose the team's own thin same-side P7 sample.
+                // See calculatePooledSideRatios() / calculateCoinTossStrategies().
+                const pooledSideRatios = await calculatePooledSideRatios(venueId, true);
+                if (!calculateP7Stats().hasData) {
+                    const swingleLevel = Math.round(matchSetup.weather?.beaufortForce ?? 0);
+                    const resolved = await resolveWindConditionedP7Data(venueId, tier, swingleLevel, sides[0], sides[1]);
+                    p7Source = resolved.source;
+                    preMatch = {
+                        historicalP7Data: resolved.p7Data,
+                        side1Name: sides[0],
+                        side2Name: sides[1],
+                        swingleScale: matchSetup.weather?.beaufortForce ?? 0,
+                        pooledSideRatios
+                    };
+                } else if (pooledSideRatios) {
+                    preMatch = { pooledSideRatios };
+                }
             }
 
             // Calculate optimal strategies
@@ -8726,10 +8743,15 @@
                 : '';
             const fmt = n => (n >= 0 ? '+' : '') + n.toFixed(1);
 
-            // Net point advantage — scale P7 to P5 for deciding sets
+            // Net point advantage — scale P7 to P5 for deciding sets. Reuse
+            // calculateCoinTossStrategies()'s own decomposed diffs (team's overall P7
+            // rate × pooled side ratio, when available) rather than the team's raw
+            // thin same-side p7.p7DiffSideN — same decomposition, not reimplemented.
             const p5ScaleDisp = isDecidingDisp ? (5 / 7) : 1;
-            const sideAdv1 = calculateNetSideAdvantage(ctx.side1Name, p7.p7DiffSide1 * p5ScaleDisp, p7.p7DiffSide2 * p5ScaleDisp, projectedTotal, switchInterval, ctx);
-            const sideAdv2 = calculateNetSideAdvantage(ctx.side2Name, p7.p7DiffSide1 * p5ScaleDisp, p7.p7DiffSide2 * p5ScaleDisp, projectedTotal, switchInterval, ctx);
+            const diffSide1Disp = strategies.decomposedDiffSide1 ?? p7.p7DiffSide1;
+            const diffSide2Disp = strategies.decomposedDiffSide2 ?? p7.p7DiffSide2;
+            const sideAdv1 = calculateNetSideAdvantage(ctx.side1Name, diffSide1Disp * p5ScaleDisp, diffSide2Disp * p5ScaleDisp, projectedTotal, switchInterval, ctx);
+            const sideAdv2 = calculateNetSideAdvantage(ctx.side2Name, diffSide1Disp * p5ScaleDisp, diffSide2Disp * p5ScaleDisp, projectedTotal, switchInterval, ctx);
             const betterSide = sideAdv1 >= sideAdv2 ? ctx.side1Name : ctx.side2Name;
             const worseSide  = sideAdv1 >= sideAdv2 ? ctx.side2Name : ctx.side1Name;
 
@@ -9815,14 +9837,41 @@
                 ? (receiveAdv.servePct - receiveAdv.receivePct) / 100 * projectedTotal
                 : 0;
             
+            // Decompose the side-specific P7 differential into two factors instead of
+            // using the team's own thin same-side sample directly: team's own OVERALL
+            // scoring rate (averaged across all its segments, regardless of side) ×
+            // (this side's pooled ratio / 50). With thin samples (often 1-3 segments per
+            // side), p7Data.p7DiffSideN alone conflates the team's general scoring
+            // ability with the side's inherent effect (wind/sun/court) — the pooled ratio
+            // (calculatePooledSideRatios(), a much larger both-teams sample) isolates the
+            // side effect, and scaling the team's own overall rate by it keeps the result
+            // specific to this team's actual scoring level. Only applies when the caller
+            // pre-resolved pooledSideRatios (async, via preMatch — see
+            // calculatePooledSideRatios()); otherwise falls back to the raw same-side diff.
+            let decomposedDiffSide1 = p7Data.p7DiffSide1;
+            let decomposedDiffSide2 = p7Data.p7DiffSide2;
+            if (preMatch?.pooledSideRatios) {
+                const totalSegs = (p7Data.side1Segments || 0) + (p7Data.side2Segments || 0);
+                if (totalSegs > 0) {
+                    const teamOverallOur = ((p7Data.avgOurSide1 || 0) * (p7Data.side1Segments || 0)
+                        + (p7Data.avgOurSide2 || 0) * (p7Data.side2Segments || 0)) / totalSegs;
+                    const teamOverallTheir = ((p7Data.avgTheirSide1 || 0) * (p7Data.side1Segments || 0)
+                        + (p7Data.avgTheirSide2 || 0) * (p7Data.side2Segments || 0)) / totalSegs;
+                    const teamOverallDiff = teamOverallOur - teamOverallTheir;
+                    const { side1: ratio1, side2: ratio2 } = preMatch.pooledSideRatios;
+                    if (ratio1 !== null && ratio1 !== undefined) decomposedDiffSide1 = teamOverallDiff * (ratio1 / 50);
+                    if (ratio2 !== null && ratio2 !== undefined) decomposedDiffSide2 = teamOverallDiff * (ratio2 / 50);
+                }
+            }
+
             // Calculate net advantage for each starting side
             // Rule 1: P5 = P7 × (5/7) for deciding sets
             // Scale observed P7 differentials down proportionally for 15-pt set rhythm.
             // Combined with switchInterval=5 above, this yields the correct per-point rate
             // inside calculateNetSideAdvantage: (P7_diff × 5/7) / 5 = P7_diff / 7.
             const p5Scale = isDeciding ? (5 / 7) : 1;
-            let scaledDiff1 = p7Data.p7DiffSide1 * p5Scale;
-            let scaledDiff2 = p7Data.p7DiffSide2 * p5Scale;
+            let scaledDiff1 = decomposedDiffSide1 * p5Scale;
+            let scaledDiff2 = decomposedDiffSide2 * p5Scale;
 
             // Rule 2: When actively inside a live deciding set, blend P5 baseline with
             // real observed 5-pt block segments from the current set.
@@ -9945,6 +9994,12 @@
             return {
                 noData: false,
                 p7Data: p7Data,
+                // Pre-p5-scale decomposed diffs (team's overall rate × pooled side ratio,
+                // when available) — exposed so other direct calculateNetSideAdvantage()
+                // callers (e.g. updateCoinTossDisplay()'s lose-toss scenario math) can
+                // reuse the same decomposition instead of reimplementing it.
+                decomposedDiffSide1: decomposedDiffSide1,
+                decomposedDiffSide2: decomposedDiffSide2,
                 receiveAdvantagePoints: receiveAdvantagePoints,
                 receiveAdv: receiveAdv,
                 sideAdvantagePoints: sideAdvantagePoints,
@@ -10148,6 +10203,42 @@
                 console.error('[COIN TOSS] Historical P7 query error:', e);
                 return { hasData: false };
             }
+        }
+
+        // Pooled side-strength ratio: % of points won by whoever stands on a given side,
+        // combining BOTH teams' performance there (not just one team's own record) — the
+        // exact same "Side advantage (pooled)" formula shown in buildSideAdvantageSection(),
+        // factored out here so calculateCoinTossStrategies() can reuse it instead of
+        // reimplementing it. ownPtsThisSide/oppPtsThisSide/ownPtsOtherSide/oppPtsOtherSide
+        // are raw point sums (not per-segment averages). Returns a percentage (0-100) or
+        // null when there's no data for either side yet.
+        function calculatePooledSideRatioPct(ownPtsThisSide, oppPtsThisSide, ownPtsOtherSide, oppPtsOtherSide) {
+            const pooledThis = ownPtsThisSide + oppPtsOtherSide;
+            const pooledOther = oppPtsThisSide + ownPtsOtherSide;
+            const pooledTotal = pooledThis + pooledOther;
+            return pooledTotal > 0 ? (pooledThis / pooledTotal * 100) : null;
+        }
+
+        // Pooled side-strength ratios for both sides at a venue, drawn from ALL of this
+        // user's own sets there — every wind level, both teams combined via
+        // calculatePooledSideRatioPct() — a much larger sample than the wind-conditioned
+        // P7 data used for the team's own scoring rate. Used by calculateCoinTossStrategies()
+        // to decompose its p7DiffSide1/p7DiffSide2 inputs into: team's own overall P7 rate ×
+        // (this side's pooled ratio / 50), instead of substituting the team's own thin
+        // same-side sample directly (see calculatePooledSideRatioPct for the shared formula).
+        // Returns { side1, side2 } (each 0-100 or null) or null if there's no data at all yet.
+        async function calculatePooledSideRatios(venueId, competitive) {
+            if (!venueId) return null;
+            const p7 = await calculateHistoricalP7StatsForVenue(venueId, competitive, null);
+            if (!p7.hasData) return null;
+            const ourSide1   = p7.avgOurSide1   * p7.side1Segments;
+            const theirSide1 = p7.avgTheirSide1 * p7.side1Segments;
+            const ourSide2   = p7.avgOurSide2   * p7.side2Segments;
+            const theirSide2 = p7.avgTheirSide2 * p7.side2Segments;
+            return {
+                side1: calculatePooledSideRatioPct(ourSide1, theirSide1, ourSide2, theirSide2),
+                side2: calculatePooledSideRatioPct(ourSide2, theirSide2, ourSide1, theirSide1)
+            };
         }
 
         function calculateNetSideAdvantage(startingSide, p7DiffSide1, p7DiffSide2, projectedTotal, switchInterval, contextState) {
