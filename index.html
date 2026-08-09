@@ -2210,7 +2210,12 @@
         
         // Update match setup labels with actual player names
         function updateMatchSetupLabels() {
-            const playerName = userProfile.name || 'Your';
+            // Admin override: mirrors startMatch()'s exact precedence — scorekeeper's
+            // adminPlayerName input is authoritative when logged in as admin, never
+            // the admin account's own profile name.
+            const playerName = isAdmin()
+                ? (document.getElementById('adminPlayerName')?.value.trim() || 'Your')
+                : (document.getElementById('playerName')?.value.trim() || userProfile.name || 'Your');
             const partnerName = document.getElementById('partnerName').value.trim() || 'Partner';
             const opp1Name = document.getElementById('opponent1Name').value.trim() || 'Opponent 1';
             const opp2Name = document.getElementById('opponent2Name').value.trim() || 'Opponent 2';
@@ -3395,7 +3400,7 @@
                 } : null
             };
             
-            document.getElementById('youName').textContent = userProfile.name;
+            document.getElementById('youName').textContent = matchSetup.yourName || userProfile.name;
             document.getElementById('youRole').textContent = `(${matchSetup.roles.player})`;
             document.getElementById('partnerDisplayName').textContent = matchSetup.partnerName;
             document.getElementById('partnerRole').textContent = `(${matchSetup.roles.partner})`;
@@ -3731,7 +3736,7 @@
                 </p>
                 <div style="display: flex; flex-wrap: wrap; justify-content: center;">
                     <button class="role-option" onclick="fixServer('you')" style="padding: 20px; font-size: 1.2em; margin: 5px; width: calc(50% - 10px);">
-                        ${userProfile.name}
+                        ${matchSetup.yourName || userProfile.name}
                     </button>
                     <button class="role-option" onclick="fixServer('partner')" style="padding: 20px; font-size: 1.2em; margin: 5px; width: calc(50% - 10px);">
                         ${matchSetup.partnerName}
@@ -4874,7 +4879,7 @@
             if (servingTeam === 'your') {
                 buttons = `
                     <button class="role-option" onclick="selectInitialServer('you')" style="padding: 20px; font-size: 1.2em; margin: 5px; width: calc(50% - 10px);">
-                        ${userProfile.name}
+                        ${matchSetup.yourName || userProfile.name}
                     </button>
                     <button class="role-option" onclick="selectInitialServer('partner')" style="padding: 20px; font-size: 1.2em; margin: 5px; width: calc(50% - 10px);">
                         ${matchSetup.partnerName}
@@ -4987,7 +4992,7 @@
             if (team === 'your') {
                 buttons = `
                     <button class="role-option" onclick="selectOtherTeamFirstServer('you')" style="padding: 20px; font-size: 1.2em; margin: 5px; width: calc(50% - 10px);">
-                        ${userProfile.name}
+                        ${matchSetup.yourName || userProfile.name}
                     </button>
                     <button class="role-option" onclick="selectOtherTeamFirstServer('partner')" style="padding: 20px; font-size: 1.2em; margin: 5px; width: calc(50% - 10px);">
                         ${matchSetup.partnerName}
@@ -7224,7 +7229,7 @@
             // ── SECTION 1: LIVE SCORE (mid-match only) ──────────────────────
             if (inMatch && displayState && (currentDataScope === 'thisSet' || currentDataScope === 'thisMatch')) {
                 // Build pair labels
-                const yourFirst = (userProfile?.name || 'You').split(' ').pop();
+                const yourFirst = (displaySetup?.yourName || userProfile?.name || 'You').split(' ').pop();
                 const partnerFirst = (displaySetup?.partnerName || 'Partner').split(' ').pop();
                 const opp1First = (displaySetup?.opponent1Name || 'Opp 1').split(' ').pop();
                 const opp2First = (displaySetup?.opponent2Name || 'Opp 2').split(' ').pop();
@@ -7889,7 +7894,7 @@
             const p7Side2Our   = p7s?.side2?.our?.length   > 0 ? (p7s.side2.our.reduce((a,b)=>a+b,0)   / p7s.side2.our.length).toFixed(1)   : '—';
             const p7Side2Their = p7s?.side2?.their?.length > 0 ? (p7s.side2.their.reduce((a,b)=>a+b,0) / p7s.side2.their.length).toFixed(1) : '—';
             
-            const yourName   = userProfile?.name || 'Your team';
+            const yourName   = displaySetup?.yourName || userProfile?.name || 'Your team';
             const partnerName = displaySetup?.partnerName || 'Partner';
             const pairName   = `${yourName.split(' ').pop()}/${partnerName.split(' ').pop()}`;
             const opp1 = displaySetup?.opponent1Name || 'Opp1';
@@ -8181,8 +8186,8 @@
                 const theirBlockerPS = isOpp1Blocker   ? displayState.servers.opp1.ps : displayState.servers.opp2.ps;
                 const theirDefenderPS= isOpp1Blocker   ? displayState.servers.opp2.ps : displayState.servers.opp1.ps;
                 
-                const ourBlockerName   = isPlayerBlocker ? (userProfile?.name || 'You') : displaySetup.partnerName;
-                const ourDefenderName  = isPlayerBlocker ? displaySetup.partnerName : (userProfile?.name || 'You');
+                const ourBlockerName   = isPlayerBlocker ? (displaySetup.yourName || userProfile?.name || 'You') : displaySetup.partnerName;
+                const ourDefenderName  = isPlayerBlocker ? displaySetup.partnerName : (displaySetup.yourName || userProfile?.name || 'You');
                 const theirBlockerName = isOpp1Blocker   ? displaySetup.opponent1Name : displaySetup.opponent2Name;
                 const theirDefenderName= isOpp1Blocker   ? displaySetup.opponent2Name : displaySetup.opponent1Name;
                 
@@ -8254,7 +8259,7 @@
         // ── SECTION 6a: Live Server Section ─────────────────────────────────
         function buildLiveServerSection(displayState, displaySetup) {
             if (!displayState || !displaySetup) return '';
-            const yourName = userProfile?.name || 'You';
+            const yourName = displaySetup.yourName || userProfile?.name || 'You';
             const rows = [
                 { key: 'you',     name: yourName,                 role: displaySetup.roles.player },
                 { key: 'partner', name: displaySetup.partnerName, role: displaySetup.roles.partner },
@@ -8320,7 +8325,7 @@
 
                 if (Object.keys(playerStats).length === 0) return `<div class="stat-box"><h3>📈 SERVER PERFORMANCE</h3><div style="opacity:0.5;font-size:0.9em;padding:6px 0;">No server data yet for ${currentSetType}-point sets.</div></div>`;
 
-                const yourName = userProfile?.name || '';
+                const yourName = matchSetup?.yourName || userProfile?.name || '';
                 const sorted = Object.entries(playerStats).sort(([na], [nb]) => {
                     if (na === yourName) return -1;
                     if (nb === yourName) return 1;
@@ -8361,7 +8366,7 @@
             // Live run if mid-match
             if (inMatch && displayState && matchState?.currentRun?.length >= 2) {
                 const runTeam = matchState.currentRun.team === 'our' 
-                    ? (userProfile?.name || 'Your team') 
+                    ? (matchSetup?.yourName || userProfile?.name || 'Your team')
                     : (matchSetup?.opponent1Name && matchSetup?.opponent2Name 
                         ? `${matchSetup.opponent1Name} / ${matchSetup.opponent2Name}` 
                         : 'Their team');
@@ -8381,7 +8386,7 @@
                 const ourLongest = displayState.longestRuns.our || 0;
                 const theirLongest = displayState.longestRuns.their || 0;
                 if (ourLongest > 0 || theirLongest > 0) {
-                    const streakWinner = ourLongest > theirLongest ? (userProfile?.name?.split(' ').pop() || 'Your team') :
+                    const streakWinner = ourLongest > theirLongest ? ((matchSetup?.yourName || userProfile?.name)?.split(' ').pop() || 'Your team') :
                                         theirLongest > ourLongest ? 'Their team' : null;
                     if (streakWinner) {
                         html += `<div class="stat-row" style="margin-bottom:10px;">
