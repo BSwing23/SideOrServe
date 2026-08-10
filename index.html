@@ -1337,6 +1337,7 @@
         let currentMatchId = null;
         let viewingMatchId = null;
         let currentSetId = null;
+        let currentPartnerSetId = null;  // mirrored set doc id, when scoring with a paired partner
         let currentServerStatsScope = 'thisSet';  // 'thisSet', 'thisMatch', 'allTime'
         
         // Partner Pairing System
@@ -3285,7 +3286,8 @@
             };
             currentMatchId = null;  // Always start a fresh Firestore document
             currentSetId = null;
-            
+            currentPartnerSetId = null;
+
             // Set 1 always starts as normal game type (to 21, switch every 7)
             matchSetup.gameType = 'normal';
 
@@ -4170,6 +4172,7 @@
                 // document instead of creating a second, duplicate doc for the final set.
                 if (!matchIsComplete) {
                     currentSetId = null;
+                    currentPartnerSetId = null;
                 }
                 await saveMatchHeader(false);      // update match header with new setsCompleted
                 console.log('[AUTO-SAVE] Set saved successfully');
@@ -4222,6 +4225,7 @@
             // after match. They are reset in initializeLiveMatch when the next match begins.
             currentMatchId = null;
             currentSetId = null;
+            currentPartnerSetId = null;
             matchState.setActive = false;
             
             showHomeScreen();
@@ -5422,12 +5426,28 @@
             try {
                 await db.collection('players').doc(currentUser.uid).update(updates);
                 console.log('[RP STATS] Updated successfully');
-                
+
                 // Reload profile to get updated stats
                 const profileDoc = await db.collection('players').doc(currentUser.uid).get();
                 userProfile = profileDoc.data();
             } catch (error) {
                 console.error('[RP STATS] Error updating:', error);
+            }
+
+            // Mirror the same team-level increments onto a paired partner's own
+            // account, so their All Time RP Averages / Momentum / Role Battle /
+            // Serve-Receive Win% actually reflect this match too. Every field built
+            // above is team-level (ourTeam/opponents/winners/losers/roleBattle/etc.)
+            // — never per-player — so the identical updates object applies correctly
+            // to either partner's document. Best-effort: never blocks the user's own
+            // save if the partner mirror fails.
+            if (selectedPairedPartner) {
+                try {
+                    await db.collection('players').doc(selectedPairedPartner.partnerId).update(updates);
+                    console.log('[RP STATS] Mirrored to partner:', selectedPairedPartner.partnerId);
+                } catch (error) {
+                    console.error('[RP STATS] Error mirroring to partner:', error);
+                }
             }
         }
 
@@ -5798,6 +5818,48 @@
                 }
             } catch (err) {
                 console.error('[SET SAVE] Error:', err);
+            }
+
+            // Mirror a full copy of this set under the paired partner's own account.
+            // Every stats query in this app (Side Advantage, Server Performance,
+            // Score-State Win Probability, etc.) filters by where('userId','==',
+            // currentUser.uid) — the partner's own docs, not an owners-array lookup
+            // (see CLAUDE.md — array-contains queries were deliberately removed).
+            // So the only way their account actually shows this match, not just a
+            // reference to it, is a real second document under their own userId.
+            // "you"/"partner" perspective swaps since this is now THEIR own set.
+            if (selectedPairedPartner) {
+                const mirroredData = {
+                    ...setData,
+                    userId: selectedPairedPartner.partnerId,
+                    playerName: selectedPairedPartner.partnerName,
+                    partnerName: setData.playerName,
+                    playerRole: setData.partnerRole,
+                    partnerRole: setData.playerRole,
+                    serverStats: {
+                        you: setData.serverStats?.partner,
+                        partner: setData.serverStats?.you,
+                        opp1: setData.serverStats?.opp1,
+                        opp2: setData.serverStats?.opp2
+                    },
+                    // Provenance: who actually scorekept this set, kept distinct from
+                    // userId (whose account this mirrored copy's stats count toward).
+                    mirroredFromSetId: currentSetId,
+                    mirroredFromUserId: currentUser.uid
+                };
+                try {
+                    if (!currentPartnerSetId) {
+                        mirroredData.createdAt = firebase.firestore.FieldValue.serverTimestamp();
+                        const mirrorRef = await db.collection('sets').add(mirroredData);
+                        currentPartnerSetId = mirrorRef.id;
+                        console.log('[SET SAVE] Created mirrored set doc for partner:', currentPartnerSetId);
+                    } else {
+                        await db.collection('sets').doc(currentPartnerSetId).update(mirroredData);
+                        console.log('[SET SAVE] Updated mirrored set doc for partner:', currentPartnerSetId);
+                    }
+                } catch (mirrorErr) {
+                    console.error('[SET SAVE] Error mirroring set for partner:', mirrorErr);
+                }
             }
         }
 

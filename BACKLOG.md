@@ -43,6 +43,46 @@ Note this is intentionally broader than the `sets` rule — any authenticated su
 
 ---
 
+### Partner Data Sharing — Firestore Rules Needed
+Paired-partner match sharing (`saveSetToFirestore()` mirroring a full set doc under the partner's own `userId`, `updateRPStats()` mirroring the same team-level increments onto the partner's own `rpStats`) needs two rule changes published, or every mirrored write fails with `permission-denied` and only the scorekeeper's own account sees the match:
+
+```
+match /players/{uid} {
+  allow read: if request.auth != null;
+  allow write: if request.auth != null && request.auth.uid == uid;
+  // Paired partner can mirror team-level RP stats onto this account too.
+  // Scoped to ONLY the rpStats field — a partner can never touch name/email/role.
+  allow update: if request.auth != null
+    && request.auth.uid != uid
+    && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['rpStats'])
+    && get(/databases/$(database)/documents/players/$(request.auth.uid)/partners/$(uid)).data.status == 'paired';
+
+  match /partners/{partnerId} {
+    allow read: if request.auth != null && request.auth.uid == uid;
+    allow write: if request.auth != null && (request.auth.uid == uid || request.auth.uid == partnerId);
+  }
+  match /matches/{matchId} {
+    allow read, write: if request.auth != null && request.auth.uid == uid;
+  }
+  match /sets/{setId} {
+    allow read, write: if request.auth != null && request.auth.uid == uid;
+  }
+}
+
+match /sets/{setId} {
+  allow create: if request.auth != null
+                  && (request.auth.uid == request.resource.data.userId
+                      || request.auth.uid in request.resource.data.owners);
+  allow read, update, delete: if request.auth != null
+                  && (request.auth.uid == resource.data.userId
+                      || request.auth.uid in resource.data.owners);
+}
+```
+The `sets` exception trusts the app-written `owners` array (same client-trust model as `venueStats`); the `players` exception is stricter — verified via a real `get()` lookup against the caller's own `partners` subcollection, and field-scoped so a partner write can never touch anything but `rpStats`.
+**Status:** Rules written, needs to be added to Firebase console (Brian to do — not something Claude can apply directly).
+
+---
+
 ## High Priority (Affects Usability)
 
 ### All Time Server Stats Blank
