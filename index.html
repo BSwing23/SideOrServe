@@ -4549,7 +4549,21 @@
             if (!ctBox) return;
 
             if (strategies.noData) {
-                ctBox.innerHTML = `<div style="opacity:0.7;font-size:0.9em;">Complete at least one segment to unlock coin toss guidance.</div>`;
+                // Structural default (see updateCoinTossDisplay() for why this is safe
+                // to state with zero data — it's a fixed mathematical fact, not a
+                // theoretical RP-calculation fallback).
+                ctBox.innerHTML = `
+                    <div style="background:#981E32;border-radius:8px;padding:14px 16px;text-align:center;">
+                        <div style="font-size:0.7em;letter-spacing:0.08em;color:rgba(255,255,255,0.75);margin-bottom:10px;font-weight:bold;">
+                            SET 3 · COIN TOSS
+                        </div>
+                        <div style="font-size:1.15em;font-weight:900;color:white;line-height:1.2;margin-bottom:6px;">
+                            WIN TOSS → RECEIVE FIRST
+                        </div>
+                        <div style="font-size:0.75em;opacity:0.75;">
+                            Structural default — receiving first requires one fewer real point to win. Complete at least one segment to unlock side-specific guidance.
+                        </div>
+                    </div>`;
                 return;
             }
 
@@ -8763,10 +8777,22 @@
             const strategies = calculateCoinTossStrategies(venueId, preMatch);
 
             if (strategies.noData) {
-                // No match data — show standalone venue/weather picker
+                // No match/side data yet — still show the structural default (receive
+                // first requires one fewer real point to win, per CLAUDE.md's
+                // Fundamental Product Thesis) rather than nothing. This is not a
+                // theoretical RP-calculation fallback — it's a fixed mathematical fact
+                // independent of any observed data, so it's always safe to state.
                 const venueOptions = Object.entries(venues).map(([k,v]) =>
                     `<option value="${k}">${v.name}</option>`).join('');
                 content.innerHTML = `
+                    <div style="text-align:center;padding:22px 16px 16px;margin-bottom:12px;">
+                        <div style="font-size:1.75em;font-weight:900;letter-spacing:0.03em;color:white;line-height:1.15;margin-bottom:8px;">
+                            CHOOSE RECEIVE FIRST
+                        </div>
+                        <div style="font-size:0.85em;opacity:0.75;">
+                            Structural default — receiving first requires one fewer real point to win. Add match data to see side-specific guidance.
+                        </div>
+                    </div>
                     <div class="stat-box">
                         <h3>🎯 COIN TOSS OPTIMIZER</h3>
                         <div style="font-size:0.9em;opacity:0.8;margin-bottom:14px;">${strategies.message || 'Select a venue to get current weather and coin toss recommendations.'}</div>
