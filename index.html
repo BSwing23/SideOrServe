@@ -8478,17 +8478,46 @@
             const lsWon   = m.longestStreak?.won   || 0;
             const lsPct   = lsTotal > 0 ? (lsWon / lsTotal * 100).toFixed(0) : null;
 
+            // Buckets are EXACT for 3 and 4 (not "X or more") so they don't overlap —
+            // a set with a run of exactly 4 counts only toward "4", not also toward
+            // "3". The top bucket stays "5+" since nothing past 5 is tracked
+            // separately, so it's naturally open-ended. Derived by subtracting the
+            // stored cumulative "at least N" counters (run3/run4/run5 are each
+            // already "at least N" sums): run{N}.total - run{N+1}.total = sets with
+            // max run EXACTLY N. Pooled across BOTH teams — the question is "does
+            // streaking correlate with winning the set," not "how often do we
+            // specifically streak," so a run by either side counts.
+            html += `<div style="font-size:0.78em;opacity:0.6;margin-bottom:4px;">Both teams pooled — does either team streaking correlate with winning the set</div>`;
             [3, 4, 5].forEach(len => {
-                const ourTotal   = m.our?.[`run${len}`]?.total  || 0;
-                const ourWon     = m.our?.[`run${len}`]?.won    || 0;
-                const theirTotal = m.their?.[`run${len}`]?.total || 0;
-                const theirWon   = m.their?.[`run${len}`]?.won  || 0;
+                const ourAtLeastTotal   = m.our?.[`run${len}`]?.total  || 0;
+                const ourAtLeastWon     = m.our?.[`run${len}`]?.won    || 0;
+                const theirAtLeastTotal = m.their?.[`run${len}`]?.total || 0;
+                const theirAtLeastWon   = m.their?.[`run${len}`]?.won  || 0;
+
+                let ourTotal, ourWon, theirTotal, theirWon, label;
+                if (len < 5) {
+                    const ourNextTotal   = m.our?.[`run${len+1}`]?.total  || 0;
+                    const ourNextWon     = m.our?.[`run${len+1}`]?.won    || 0;
+                    const theirNextTotal = m.their?.[`run${len+1}`]?.total || 0;
+                    const theirNextWon   = m.their?.[`run${len+1}`]?.won  || 0;
+                    ourTotal   = ourAtLeastTotal   - ourNextTotal;
+                    ourWon     = ourAtLeastWon     - ourNextWon;
+                    theirTotal = theirAtLeastTotal - theirNextTotal;
+                    theirWon   = theirAtLeastWon   - theirNextWon;
+                    label = `A streak of exactly ${len} wins`;
+                } else {
+                    ourTotal = ourAtLeastTotal;
+                    ourWon = ourAtLeastWon;
+                    theirTotal = theirAtLeastTotal;
+                    theirWon = theirAtLeastWon;
+                    label = `A streak of ${len}+ wins`;
+                }
 
                 const combinedTotal = ourTotal + theirTotal;
                 const combinedWon   = ourWon + theirWon;
                 const pct = combinedTotal > 0 ? (combinedWon / combinedTotal * 100).toFixed(0) : null;
 
-                html += `<div class="stat-row"><span>A streak of ${len}+ wins</span><strong>${pct ? pct + '%' : '—'}</strong></div>`;
+                html += `<div class="stat-row"><span>${label}</span><strong>${pct ? pct + '%' : '—'}</strong></div>`;
                 if (combinedTotal > 0) html += sampleDisclaimer(combinedTotal);
             });
 
