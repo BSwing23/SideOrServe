@@ -8452,7 +8452,6 @@
                     <div style="font-size:0.72em;letter-spacing:0.06em;opacity:0.55;text-transform:uppercase;margin-bottom:2px;">The Control</div>
                     <div class="stat-row"><span>Our P7 Everywhere</span><span><strong>${_controlRaw}</strong>${p7SampleTag(globalP7.hasData ? globalP7.segments : null)}</span></div>
                     <div style="font-size:0.72em;opacity:0.5;margin:4px 0 8px;">Career-wide, every venue — the baseline the per-venue figures below are measured against.</div>
-                    <div class="stat-row"><span>Opponent's P7 against us</span><span><strong>${_controlRaw}</strong>${p7SampleTag(globalP7.hasData ? globalP7.segments : null)}</span></div>
                 </div>`;
 
                 Object.entries(_filteredVenueData).forEach(([venueId, vd]) => {
@@ -8557,13 +8556,9 @@
                         html += `
                             <div style="background:rgba(255,255,255,0.05);border-radius:6px;padding:10px;margin-bottom:6px;">
                                 <div style="font-weight:bold;margin-bottom:6px;">${side} Side</div>
-                                <div class="stat-row" style="margin-bottom:2px;"><span>Side advantage (pooled)</span><span><strong>${pooledPct !== null ? pooledPct + '%' : '—'}</strong></span></div>
-                                <div style="font-size:0.78em;opacity:0.55;margin-bottom:8px;">% of pts won by whoever stands here (both teams); &gt;50% = side edge</div>
-                                <div style="font-size:0.82em;opacity:0.65;margin-bottom:4px;padding-top:4px;border-top:1px solid rgba(255,255,255,0.06);">Your team on this side:</div>
+                                <div style="font-size:0.82em;opacity:0.65;margin-bottom:4px;">Your team on this side:</div>
                                 <div class="stat-row"><span>Your pair wins</span><span><strong>${ourPct}%</strong> of points</span></div>
                                 <div class="stat-row"><span>Opp pair wins</span><span><strong>${theirPct}%</strong> of points</span></div>
-                                <div class="stat-row" style="font-size:0.85em;opacity:0.8;"><span>Your P7 avg</span><span><strong>${avgOurStr}</strong> vs ${avgTheirStr}</span></div>
-                                <div class="stat-row" style="font-size:0.85em;"><span>P7 edge</span><span><strong>${p7netStr}</strong> pts/seg</span></div>
                                 <div style="font-size:0.82em;opacity:0.65;margin-bottom:4px;padding-top:4px;border-top:1px solid rgba(255,255,255,0.06);">Opponent on this side:</div>
                                 <div class="stat-row" style="font-size:0.85em;opacity:0.8;"><span>Opponent's P7 avg</span><span><strong>${oppOwnP7Str}</strong></span></div>
                             </div>`;
@@ -8575,7 +8570,7 @@
                         const avgPts15 = n15 > 0 ? totalPointsSum15 / n15 : null;
                         if (avgPts21 !== null) {
                             const sw21 = Math.floor(avgPts21 / 7);
-                            const rem21 = Math.round(avgPts21 % 7);
+                            const rem21 = Math.floor(avgPts21 % 7);
                             const end21 = sw21 % 2 === 0 ? 'starting side' : 'opposite side';
                             html += `<div style="font-size:0.85em;opacity:0.8;padding:6px 0;border-top:1px solid rgba(255,255,255,0.08);margin-top:6px;">
                                 In 21-pt sets you switch <strong>${sw21}</strong> times, ending on your <strong>${end21}</strong> for <strong>${rem21}</strong> extra serves.
@@ -8583,7 +8578,7 @@
                         }
                         if (avgPts15 !== null) {
                             const sw15 = Math.floor(avgPts15 / 5);
-                            const rem15 = Math.round(avgPts15 % 5);
+                            const rem15 = Math.floor(avgPts15 % 5);
                             const end15 = sw15 % 2 === 0 ? 'starting side' : 'opposite side';
                             html += `<div style="font-size:0.85em;opacity:0.8;padding:6px 0;border-top:1px solid rgba(255,255,255,0.08);margin-top:6px;">
                                 In 15-pt sets you switch <strong>${sw15}</strong> times, ending on your <strong>${end15}</strong> for <strong>${rem15}</strong> extra serves.
@@ -9495,7 +9490,6 @@
                         <div style="font-size:0.72em;opacity:0.5;margin:4px 0 10px;">Career-wide, every venue — the baseline everything below is measured against.</div>
 
                         <div style="font-size:0.72em;letter-spacing:0.06em;opacity:0.55;text-transform:uppercase;margin-bottom:2px;">Deviations From Our Baseline</div>
-                        <div class="stat-row"><span>Opponent's P7 against us</span><span><strong>${globalP7.hasData ? `Our P7 = ${globalP7.avgOur.toFixed(1)}   Opp = ${globalP7.avgTheir.toFixed(1)}` : '—'}</strong>${p7SampleTag(globalP7.hasData ? globalP7.segments : null)}</span></div>
                         <div class="stat-row"><span>Our P7 on the ${ctx.side1Name}, this venue</span><span><strong>${(_ownP7Side1 !== null && _ownP7Side1 !== undefined) ? `${_ownP7Side1.toFixed(1)}${globalP7.hasData ? ' (' + formatP7Deviation(_ownP7Side1, globalP7.avgOur) + ')' : ''}` : '—'}</strong>${p7SampleTag(n1)}</span></div>
                         <div class="stat-row"><span>Our P7 on the ${ctx.side2Name}, this venue</span><span><strong>${(_ownP7Side2 !== null && _ownP7Side2 !== undefined) ? `${_ownP7Side2.toFixed(1)}${globalP7.hasData ? ' (' + formatP7Deviation(_ownP7Side2, globalP7.avgOur) + ')' : ''}` : '—'}</strong>${p7SampleTag(n2)}</span></div>
 
