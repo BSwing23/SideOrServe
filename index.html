@@ -8484,7 +8484,31 @@
                     html += `<div style="margin-bottom:16px;"><div style="font-weight:bold;margin-bottom:8px;">📍 ${vd.name}</div>`;
                     html += `<div style="font-size:0.85em;opacity:0.7;margin-bottom:8px;">Avg. total points per set: ${avgTotalPoints} &nbsp;|&nbsp; ${n} set${n!==1?'s':''} tracked</div>`;
                     html += sampleDisclaimer(n);
-                    
+
+                    // Plain, directly-observed facts — no ratios, scaling, or pooling
+                    // applied. Lead with these before the pooled/team-specific
+                    // breakdown below: what we actually averaged overall, and what we
+                    // actually averaged on each side.
+                    {
+                        let _totalOurAll = 0, _totalTheirAll = 0, _totalSegsAll = 0;
+                        sides.forEach(side => {
+                            const sp = sidePoints[side];
+                            _totalOurAll += sp.our;
+                            _totalTheirAll += sp.their;
+                            _totalSegsAll += sp.segments;
+                        });
+                        const _overallP7 = _totalSegsAll > 0 ? (_totalOurAll - _totalTheirAll) / _totalSegsAll : null;
+                        const _fmtPlainP7Adv = v => (v === null || v === undefined) ? '—' : (v >= 0 ? '+' : '') + v.toFixed(1);
+                        html += `<div style="background:rgba(255,255,255,0.06);border-radius:6px;padding:10px;margin-bottom:10px;">
+                            <div class="stat-row"><span>Your Overall P7</span><span><strong>${_fmtPlainP7Adv(_overallP7)}</strong></span></div>
+                            ${sides.map(side => {
+                                const sp = sidePoints[side];
+                                const _sideP7 = sp.segments > 0 ? (sp.our - sp.their) / sp.segments : null;
+                                return `<div class="stat-row"><span>Your P7 on the ${side}</span><span><strong>${_fmtPlainP7Adv(_sideP7)}</strong></span></div>`;
+                            }).join('')}
+                        </div>`;
+                    }
+
                     // Opposite-side lookup for pooled metric computation
                     const getOppSide = s => {
                         const oppMap = { south:'North', north:'South', east:'West', west:'East',
@@ -9366,6 +9390,21 @@
             const totalSide1 = p7.avgOurSide1 + p7.avgTheirSide1;
             const totalSide2 = p7.avgOurSide2 + p7.avgTheirSide2;
 
+            // Plain, directly-observed facts — no ratios, scaling, or decomposition
+            // applied. p7.p7DiffSideN (avgOurSideN - avgTheirSideN) is exactly the
+            // same real observed value shown as "P7 edge" in Side Advantage by Venue;
+            // "Overall" is the segment-weighted average of both sides' own diffs —
+            // the same figure the side-strength decomposition used to compute
+            // internally (see calculateCoinTossStrategies()) — surfaced directly here
+            // instead of only feeding a calculation.
+            const _ownP7Side1 = p7.p7DiffSide1;
+            const _ownP7Side2 = p7.p7DiffSide2;
+            const _ownSegsTotal = (n1 || 0) + (n2 || 0);
+            const _overallOwnP7 = _ownSegsTotal > 0
+                ? ((_ownP7Side1 || 0) * (n1 || 0) + (_ownP7Side2 || 0) * (n2 || 0)) / _ownSegsTotal
+                : null;
+            const _fmtPlainP7 = v => (v === null || v === undefined) ? '—' : (v >= 0 ? '+' : '') + v.toFixed(1);
+
             // Wind on each side
             let windRowHtml = '';
             if (matchSetup.weather) {
@@ -9447,6 +9486,11 @@
                 <div class="stat-box" style="border-left-color:rgba(255,255,255,0.2);">
                     <h3>📐 P7 BY SIDE — ${setsLabel}</h3>
                     ${p7SourceNote ? `<div style="font-size:0.78em;opacity:0.55;margin-bottom:8px;">${p7SourceNote}</div>` : ''}
+                    <div style="background:rgba(255,255,255,0.06);border-radius:6px;padding:10px;margin-bottom:10px;">
+                        <div class="stat-row"><span>Your Overall P7</span><span><strong>${_fmtPlainP7(_overallOwnP7)}</strong></span></div>
+                        <div class="stat-row"><span>Your P7 on the ${ctx.side1Name}</span><span><strong>${_fmtPlainP7(_ownP7Side1)}</strong></span></div>
+                        <div class="stat-row"><span>Your P7 on the ${ctx.side2Name}</span><span><strong>${_fmtPlainP7(_ownP7Side2)}</strong></span></div>
+                    </div>
                     ${pooledSideRatios?.label ? `<div style="font-size:0.78em;opacity:0.55;margin-bottom:8px;">Side strength: ${pooledSideRatios.label}</div>` : ''}
                     <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px;">
                         <div style="padding:10px;background:rgba(152,30,50,0.2);border-radius:6px;text-align:center;">
