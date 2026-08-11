@@ -9219,6 +9219,13 @@
             const halfTailSwing = (strategies.extrasAdvantage || 0) / 2;
             const bestSideAdv = halfTailSwing;
             const worseSideAdv = -halfTailSwing;
+            // Same isolated figures, mapped back onto side1/side2 for the P7 BY SIDE
+            // box below — that box was still showing the raw sideAdv1/sideAdv2
+            // baseline-inflated values directly (the exact thing this comment block
+            // warns against), which is why both sides could show large, similar,
+            // misleadingly-large numbers regardless of the actual side effect size.
+            const side1DisplayAdv = ctx.side1Name === betterSide ? bestSideAdv : worseSideAdv;
+            const side2DisplayAdv = ctx.side2Name === betterSide ? bestSideAdv : worseSideAdv;
 
             // If you LOSE the toss, the opponent picks one axis (side, or serve/receive)
             // and you get whatever's left on the other axis:
@@ -9444,12 +9451,12 @@
                     <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px;">
                         <div style="padding:10px;background:rgba(152,30,50,0.2);border-radius:6px;text-align:center;">
                             <div style="font-weight:bold;margin-bottom:2px;">${ctx.side1Name}</div>
-                            <div style="font-size:1.3em;font-weight:bold;color:white;">${fmt(sideAdv1)}</div>
+                            <div style="font-size:1.3em;font-weight:bold;color:white;">${fmt(side1DisplayAdv)}</div>
                             <div style="font-size:0.75em;opacity:0.6;margin-top:2px;">P7: ${totalSide1.toFixed(1)} · ${n1} switch${n1!==1?'es':''}</div>
                         </div>
                         <div style="padding:10px;background:rgba(152,30,50,0.2);border-radius:6px;text-align:center;">
                             <div style="font-weight:bold;margin-bottom:2px;">${ctx.side2Name}</div>
-                            <div style="font-size:1.3em;font-weight:bold;color:white;">${fmt(sideAdv2)}</div>
+                            <div style="font-size:1.3em;font-weight:bold;color:white;">${fmt(side2DisplayAdv)}</div>
                             <div style="font-size:0.75em;opacity:0.6;margin-top:2px;">P7: ${totalSide2.toFixed(1)} · ${n2} switch${n2!==1?'es':''}</div>
                         </div>
                     </div>
