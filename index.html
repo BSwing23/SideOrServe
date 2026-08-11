@@ -10292,31 +10292,39 @@
                 ? (receiveAdv.servePct - receiveAdv.receivePct) / 100 * projectedTotal
                 : 0;
             
-            // Decompose the side-specific P7 differential into two factors instead of
-            // using the team's own thin same-side sample directly: team's own OVERALL
-            // scoring rate (averaged across all its segments, regardless of side) ×
-            // (this side's pooled ratio / 50). With thin samples (often 1-3 segments per
-            // side), p7Data.p7DiffSideN alone conflates the team's general scoring
-            // ability with the side's inherent effect (wind/sun/court) — the pooled ratio
-            // (calculatePooledSideRatios(), a much larger both-teams sample) isolates the
-            // side effect, and scaling the team's own overall rate by it keeps the result
-            // specific to this team's actual scoring level. Only applies when the caller
-            // pre-resolved pooledSideRatios (async, via preMatch — see
-            // calculatePooledSideRatios()); otherwise falls back to the raw same-side diff.
+            // Decompose the side-specific P7 differential as a PER-SIDE, sample-size-
+            // weighted blend of two sources — never averaged across sides: the team's
+            // own same-side observed diff (p7Data.p7DiffSideN, often thin — 1-3
+            // segments) and the confidence-tier's pooled per-side diff
+            // (preMatch.pooledSideRatios.p7DiffSideN, a broader sample resolved by
+            // calculatePooledSideRatios()). Each side is computed entirely from its
+            // own two numbers.
+            //
+            // PRIOR VERSION (bug): multiplied a single team-wide "overall P7" scalar
+            // — a segment-weighted AVERAGE of both sides' diffs — by each side's
+            // pooled ratio. That collapses whenever the two sides' real effects point
+            // in different directions (or partly offset): the shared average lands
+            // near zero, and since BOTH sides were scaled from that SAME collapsed
+            // number, both got pulled toward zero regardless of how different their
+            // actual pooled ratios were. Confirmed: this produced 0.0/0.0 for Ocean
+            // Park Beach despite a real ~+1.7 pt/seg West/East split shown correctly
+            // in Side Advantage (which computes each side independently and never
+            // averages across sides — this fix now matches that approach). A
+            // per-side blend that only ever combines a side's own data with that
+            // SAME side's pooled data cannot cancel across sides this way.
             let decomposedDiffSide1 = p7Data.p7DiffSide1;
             let decomposedDiffSide2 = p7Data.p7DiffSide2;
             if (preMatch?.pooledSideRatios) {
-                const totalSegs = (p7Data.side1Segments || 0) + (p7Data.side2Segments || 0);
-                if (totalSegs > 0) {
-                    const teamOverallOur = ((p7Data.avgOurSide1 || 0) * (p7Data.side1Segments || 0)
-                        + (p7Data.avgOurSide2 || 0) * (p7Data.side2Segments || 0)) / totalSegs;
-                    const teamOverallTheir = ((p7Data.avgTheirSide1 || 0) * (p7Data.side1Segments || 0)
-                        + (p7Data.avgTheirSide2 || 0) * (p7Data.side2Segments || 0)) / totalSegs;
-                    const teamOverallDiff = teamOverallOur - teamOverallTheir;
-                    const { side1: ratio1, side2: ratio2 } = preMatch.pooledSideRatios;
-                    if (ratio1 !== null && ratio1 !== undefined) decomposedDiffSide1 = teamOverallDiff * (ratio1 / 50);
-                    if (ratio2 !== null && ratio2 !== undefined) decomposedDiffSide2 = teamOverallDiff * (ratio2 / 50);
-                }
+                const pr = preMatch.pooledSideRatios;
+                const blendSide = (ownDiff, ownSegs, poolDiff, poolSegs) => {
+                    const totalSegs = (ownSegs || 0) + (poolSegs || 0);
+                    if (totalSegs === 0 || poolDiff === null || poolDiff === undefined) return ownDiff;
+                    return ((ownDiff || 0) * (ownSegs || 0) + poolDiff * (poolSegs || 0)) / totalSegs;
+                };
+                decomposedDiffSide1 = blendSide(p7Data.p7DiffSide1, p7Data.side1Segments, pr.p7DiffSide1, pr.side1Segments);
+                decomposedDiffSide2 = blendSide(p7Data.p7DiffSide2, p7Data.side2Segments, pr.p7DiffSide2, pr.side2Segments);
+                console.log('[COIN TOSS] Per-side blend — side1:', p7Data.p7DiffSide1, '(n=' + p7Data.side1Segments + ') + pooled', pr.p7DiffSide1, '(n=' + pr.side1Segments + ') = ' + decomposedDiffSide1,
+                    '| side2:', p7Data.p7DiffSide2, '(n=' + p7Data.side2Segments + ') + pooled', pr.p7DiffSide2, '(n=' + pr.side2Segments + ') = ' + decomposedDiffSide2);
             }
 
             // Calculate net advantage for each starting side
@@ -10813,7 +10821,16 @@
                 side2: calculatePooledSideRatioPct(ourSide2, theirSide2, ourSide1, theirSide1),
                 confidence: chosen.confidence,
                 sampleSize: n,
-                label: chosen.label(n)
+                label: chosen.label(n),
+                // This tier's own per-side P7 differential and sample size — exposed so
+                // calculateCoinTossStrategies() can blend PER SIDE (never averaging the
+                // two sides together) instead of decomposing through a single team-wide
+                // scalar that can cancel out a real, opposite-direction side split. See
+                // that function's decomposedDiffSideN comment for why.
+                p7DiffSide1: p7.p7DiffSide1,
+                p7DiffSide2: p7.p7DiffSide2,
+                side1Segments: p7.side1Segments,
+                side2Segments: p7.side2Segments
             };
         }
 
