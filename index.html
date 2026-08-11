@@ -10936,18 +10936,25 @@
                 
                 const partners = partnersSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
 
-                // Count shared sets for each paired partner from sets collection
+                // Count shared MATCHES (distinct matchId) for each paired partner, not
+                // raw set documents — a straight-set 2-0 match is 2 set docs but 1
+                // match, and the label shown to the user says "matches".
                 for (const partner of partners) {
                     if (partner.status === 'paired' && partner.partnerId) {
                         try {
                             const setsSnap = await db.collection('sets')
                                 .where('userId', '==', currentUser.uid)
                                 .limit(200).get();
-                            const sharedCount = setsSnap.docs.filter(d => {
-                                const owners = d.data().owners || [];
-                                return owners.includes(partner.partnerId) && d.data().complete;
-                            }).length;
-                            partner.totalMatches = sharedCount;
+                            const sharedMatchIds = new Set(
+                                setsSnap.docs
+                                    .filter(d => {
+                                        const owners = d.data().owners || [];
+                                        return owners.includes(partner.partnerId) && d.data().complete;
+                                    })
+                                    .map(d => d.data().matchId)
+                                    .filter(Boolean)
+                            );
+                            partner.totalMatches = sharedMatchIds.size;
                         } catch(e) { /* keep existing totalMatches */ }
                     }
                 }
