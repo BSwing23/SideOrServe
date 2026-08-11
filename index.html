@@ -7732,18 +7732,13 @@
             const isLiveScope = currentDataScope === 'thisSet' || currentDataScope === 'thisMatch';
             const isHistScope = currentDataScope === 'today' || currentDataScope === 'allTime';
 
-            // ── SECTION 1: COIN TOSS DATA ────────────────────────────────────
+            // ── SECTION 1: SERVE FIRST / RECEIVE FIRST ADVANTAGE (incl. RP Averages) ──
             html += buildLeadingRecommendation(stats, displayState, displaySetup, inMatch);
 
             html += `<hr style="border-color: rgba(255,255,255,0.1); margin: 15px 0;">`;
 
             // ── SECTION 2: SIDE BIAS (venue-specific) ────────────────────────
             html += await buildSideBiasSection();
-
-            html += `<hr style="border-color: rgba(255,255,255,0.1); margin: 15px 0;">`;
-
-            // ── SECTION 3: RP AVERAGES ───────────────────────────────────────
-            html += buildRPAveragesSection(stats, displayState, displaySetup, inMatch);
 
             html += `<hr style="border-color: rgba(255,255,255,0.1); margin: 15px 0;">`;
 
@@ -7890,8 +7885,9 @@
                 </div>`).join('');
 
             return `<div class="stat-box" style="border-left-color:rgba(255,255,255,0.5);margin-bottom:4px;">
-                <h3>⚡ COIN TOSS DATA</h3>
+                <h3>⚡ SERVE FIRST / RECEIVE FIRST ADVANTAGE</h3>
                 ${coinTossBlock}
+                ${buildRPAveragesSection(stats, displayState, displaySetup, inMatch)}
                 ${recordBlock}
                 ${rows}
             </div>`;
@@ -8439,8 +8435,8 @@
                     : '';
 
                 const _headingLabel = currentVenueFilter !== 'all'
-                    ? `SIDE ADVANTAGE — ${(_filteredVenueData[currentVenueFilter]?.name || '').toUpperCase()}`
-                    : 'SIDE ADVANTAGE BY VENUE';
+                    ? `POINTS PER 7 DATA — ${(_filteredVenueData[currentVenueFilter]?.name || '').toUpperCase()}`
+                    : 'POINTS PER 7 DATA';
                 let html = `<div class="stat-box" style="border-left-color:rgba(255,255,255,0.5);"><h3>🌍 ${_headingLabel}</h3>${_mixingWarning}`;
 
                 // Control-vs-deviation framing (see calculateGlobalP7Baseline() and
@@ -8451,11 +8447,12 @@
                 // toward zero from side-to-side cancellation. Everything venue-specific
                 // below is framed as a deviation from this.
                 const globalP7 = await calculateGlobalP7Baseline(competitive);
+                const _controlRaw = globalP7.hasData ? `Our P7 = ${globalP7.avgOur.toFixed(1)}   Opp = ${globalP7.avgTheir.toFixed(1)}` : '—';
                 html += `<div style="background:rgba(255,255,255,0.06);border-radius:6px;padding:12px;margin-bottom:14px;">
                     <div style="font-size:0.72em;letter-spacing:0.06em;opacity:0.55;text-transform:uppercase;margin-bottom:2px;">The Control</div>
-                    <div class="stat-row"><span>Our P7 Everywhere</span><span><strong>${globalP7.hasData ? ((globalP7.diff >= 0 ? '+' : '') + globalP7.diff.toFixed(1)) : '—'}</strong>${p7SampleTag(globalP7.hasData ? globalP7.segments : null)}</span></div>
+                    <div class="stat-row"><span>Our P7 Everywhere</span><span><strong>${_controlRaw}</strong>${p7SampleTag(globalP7.hasData ? globalP7.segments : null)}</span></div>
                     <div style="font-size:0.72em;opacity:0.5;margin:4px 0 8px;">Career-wide, every venue — the baseline the per-venue figures below are measured against.</div>
-                    <div class="stat-row"><span>Opponent's P7 against us</span><span><strong>${globalP7.hasData ? formatP7Deviation(globalP7.avgTheir, globalP7.diff) : '—'}</strong>${p7SampleTag(globalP7.hasData ? globalP7.segments : null)}</span></div>
+                    <div class="stat-row"><span>Opponent's P7 against us</span><span><strong>${_controlRaw}</strong>${p7SampleTag(globalP7.hasData ? globalP7.segments : null)}</span></div>
                 </div>`;
 
                 Object.entries(_filteredVenueData).forEach(([venueId, vd]) => {
@@ -8517,8 +8514,9 @@
                         <div style="font-size:0.72em;letter-spacing:0.06em;opacity:0.55;text-transform:uppercase;margin-bottom:2px;">Deviations From Our Baseline</div>
                         ${sides.map(side => {
                             const sp = sidePoints[side];
-                            const _sideP7 = sp.segments > 0 ? (sp.our - sp.their) / sp.segments : null;
-                            return `<div class="stat-row"><span>Our P7 on the ${side}, this venue</span><span><strong>${globalP7.hasData ? formatP7Deviation(_sideP7, globalP7.diff) : '—'}</strong>${p7SampleTag(sp.segments)}</span></div>`;
+                            const _sideP7 = sp.segments > 0 ? sp.our / sp.segments : null;
+                            const _dev = (globalP7.hasData && _sideP7 !== null) ? formatP7Deviation(_sideP7, globalP7.avgOur) : null;
+                            return `<div class="stat-row"><span>Our P7 on the ${side}, this venue</span><span><strong>${_sideP7 !== null ? `${_sideP7.toFixed(1)}${_dev !== null ? ' (' + _dev + ')' : ''}` : '—'}</strong>${p7SampleTag(sp.segments)}</span></div>`;
                         }).join('')}
                         <div style="font-size:0.72em;letter-spacing:0.06em;opacity:0.55;text-transform:uppercase;margin:10px 0 2px;">Pooled Side Strength — deviation from neutral 50%, not from us</div>
                         ${sides.map(side => {
@@ -8527,7 +8525,9 @@
                             const oppSp = oppKey ? sidePoints[oppKey] : null;
                             const pooledRatio = calculatePooledSideRatioPct(sp.our, sp.their, oppSp ? oppSp.our : 0, oppSp ? oppSp.their : 0);
                             const pooledN = sp.segments + (oppSp ? oppSp.segments : 0);
-                            return `<div class="stat-row"><span>Pooled P7, ${side}, this venue</span><span><strong>${pooledRatio !== null ? ((pooledRatio - 50 >= 0 ? '+' : '') + (pooledRatio - 50).toFixed(1) + 'pp') : '—'}</strong>${p7SampleTag(pooledN)}</span></div>`;
+                            const pooledP7Val = pooledN > 0 ? (sp.our + (oppSp ? oppSp.their : 0)) / pooledN : null;
+                            const pooledDev = pooledRatio !== null ? ((pooledRatio - 50 >= 0 ? '+' : '') + (pooledRatio - 50).toFixed(1) + 'pp') : null;
+                            return `<div class="stat-row"><span>Pooled P7, ${side}, this venue</span><span><strong>${pooledP7Val !== null ? `${pooledP7Val.toFixed(1)}${pooledDev !== null ? ' (' + pooledDev + ')' : ''}` : '—'}</strong>${p7SampleTag(pooledN)}</span></div>`;
                         }).join('')}
                     </div>`;
 
@@ -9405,8 +9405,8 @@
             // side-strength figures), never as a standalone number — see
             // formatP7Deviation()/p7SampleTag().
             const globalP7 = await calculateGlobalP7Baseline(true);
-            const _ownP7Side1 = p7.p7DiffSide1;
-            const _ownP7Side2 = p7.p7DiffSide2;
+            const _ownP7Side1 = p7.avgOurSide1;
+            const _ownP7Side2 = p7.avgOurSide2;
 
             // Wind on each side
             let windRowHtml = '';
@@ -9491,18 +9491,18 @@
                     ${p7SourceNote ? `<div style="font-size:0.78em;opacity:0.55;margin-bottom:8px;">${p7SourceNote}</div>` : ''}
                     <div style="background:rgba(255,255,255,0.06);border-radius:6px;padding:12px;margin-bottom:10px;">
                         <div style="font-size:0.72em;letter-spacing:0.06em;opacity:0.55;text-transform:uppercase;margin-bottom:2px;">The Control</div>
-                        <div class="stat-row"><span>Our P7 Everywhere</span><span><strong>${globalP7.hasData ? ((globalP7.diff >= 0 ? '+' : '') + globalP7.diff.toFixed(1)) : '—'}</strong>${p7SampleTag(globalP7.hasData ? globalP7.segments : null)}</span></div>
+                        <div class="stat-row"><span>Our P7 Everywhere</span><span><strong>${globalP7.hasData ? `Our P7 = ${globalP7.avgOur.toFixed(1)}   Opp = ${globalP7.avgTheir.toFixed(1)}` : '—'}</strong>${p7SampleTag(globalP7.hasData ? globalP7.segments : null)}</span></div>
                         <div style="font-size:0.72em;opacity:0.5;margin:4px 0 10px;">Career-wide, every venue — the baseline everything below is measured against.</div>
 
                         <div style="font-size:0.72em;letter-spacing:0.06em;opacity:0.55;text-transform:uppercase;margin-bottom:2px;">Deviations From Our Baseline</div>
-                        <div class="stat-row"><span>Opponent's P7 against us</span><span><strong>${globalP7.hasData ? formatP7Deviation(globalP7.avgTheir, globalP7.diff) : '—'}</strong>${p7SampleTag(globalP7.hasData ? globalP7.segments : null)}</span></div>
-                        <div class="stat-row"><span>Our P7 on the ${ctx.side1Name}, this venue</span><span><strong>${globalP7.hasData ? formatP7Deviation(_ownP7Side1, globalP7.diff) : '—'}</strong>${p7SampleTag(n1)}</span></div>
-                        <div class="stat-row"><span>Our P7 on the ${ctx.side2Name}, this venue</span><span><strong>${globalP7.hasData ? formatP7Deviation(_ownP7Side2, globalP7.diff) : '—'}</strong>${p7SampleTag(n2)}</span></div>
+                        <div class="stat-row"><span>Opponent's P7 against us</span><span><strong>${globalP7.hasData ? `Our P7 = ${globalP7.avgOur.toFixed(1)}   Opp = ${globalP7.avgTheir.toFixed(1)}` : '—'}</strong>${p7SampleTag(globalP7.hasData ? globalP7.segments : null)}</span></div>
+                        <div class="stat-row"><span>Our P7 on the ${ctx.side1Name}, this venue</span><span><strong>${(_ownP7Side1 !== null && _ownP7Side1 !== undefined) ? `${_ownP7Side1.toFixed(1)}${globalP7.hasData ? ' (' + formatP7Deviation(_ownP7Side1, globalP7.avgOur) + ')' : ''}` : '—'}</strong>${p7SampleTag(n1)}</span></div>
+                        <div class="stat-row"><span>Our P7 on the ${ctx.side2Name}, this venue</span><span><strong>${(_ownP7Side2 !== null && _ownP7Side2 !== undefined) ? `${_ownP7Side2.toFixed(1)}${globalP7.hasData ? ' (' + formatP7Deviation(_ownP7Side2, globalP7.avgOur) + ')' : ''}` : '—'}</strong>${p7SampleTag(n2)}</span></div>
 
                         ${pooledSideRatios ? `
                         <div style="font-size:0.72em;letter-spacing:0.06em;opacity:0.55;text-transform:uppercase;margin:10px 0 2px;">Pooled Side Strength — deviation from neutral 50%, not from us</div>
-                        <div class="stat-row"><span>Pooled P7, ${ctx.side1Name}, this venue</span><span><strong>${(pooledSideRatios.side1 !== null && pooledSideRatios.side1 !== undefined) ? ((pooledSideRatios.side1 - 50 >= 0 ? '+' : '') + (pooledSideRatios.side1 - 50).toFixed(1) + 'pp') : '—'}</strong>${pooledSideRatios.confidence ? ` <span style="${(pooledSideRatios.confidence === 'low' || pooledSideRatios.confidence === 'verylow') ? 'font-weight:bold;' : 'opacity:0.6;'}">(${pooledSideRatios.confidence === 'verylow' ? 'very low' : pooledSideRatios.confidence} confidence, n=${pooledSideRatios.sampleSize})</span>` : ''}</span></div>
-                        <div class="stat-row"><span>Pooled P7, ${ctx.side2Name}, this venue</span><span><strong>${(pooledSideRatios.side2 !== null && pooledSideRatios.side2 !== undefined) ? ((pooledSideRatios.side2 - 50 >= 0 ? '+' : '') + (pooledSideRatios.side2 - 50).toFixed(1) + 'pp') : '—'}</strong>${pooledSideRatios.confidence ? ` <span style="${(pooledSideRatios.confidence === 'low' || pooledSideRatios.confidence === 'verylow') ? 'font-weight:bold;' : 'opacity:0.6;'}">(${pooledSideRatios.confidence === 'verylow' ? 'very low' : pooledSideRatios.confidence} confidence, n=${pooledSideRatios.sampleSize})</span>` : ''}</span></div>
+                        <div class="stat-row"><span>Pooled P7, ${ctx.side1Name}, this venue</span><span><strong>${(pooledSideRatios.pooledP7Side1 !== null && pooledSideRatios.pooledP7Side1 !== undefined) ? `${pooledSideRatios.pooledP7Side1.toFixed(1)}${(pooledSideRatios.side1 !== null && pooledSideRatios.side1 !== undefined) ? ' (' + (pooledSideRatios.side1 - 50 >= 0 ? '+' : '') + (pooledSideRatios.side1 - 50).toFixed(1) + 'pp)' : ''}` : '—'}</strong>${pooledSideRatios.confidence ? ` <span style="${(pooledSideRatios.confidence === 'low' || pooledSideRatios.confidence === 'verylow') ? 'font-weight:bold;' : 'opacity:0.6;'}">(${pooledSideRatios.confidence === 'verylow' ? 'very low' : pooledSideRatios.confidence} confidence, n=${pooledSideRatios.sampleSize})</span>` : ''}</span></div>
+                        <div class="stat-row"><span>Pooled P7, ${ctx.side2Name}, this venue</span><span><strong>${(pooledSideRatios.pooledP7Side2 !== null && pooledSideRatios.pooledP7Side2 !== undefined) ? `${pooledSideRatios.pooledP7Side2.toFixed(1)}${(pooledSideRatios.side2 !== null && pooledSideRatios.side2 !== undefined) ? ' (' + (pooledSideRatios.side2 - 50 >= 0 ? '+' : '') + (pooledSideRatios.side2 - 50).toFixed(1) + 'pp)' : ''}` : '—'}</strong>${pooledSideRatios.confidence ? ` <span style="${(pooledSideRatios.confidence === 'low' || pooledSideRatios.confidence === 'verylow') ? 'font-weight:bold;' : 'opacity:0.6;'}">(${pooledSideRatios.confidence === 'verylow' ? 'very low' : pooledSideRatios.confidence} confidence, n=${pooledSideRatios.sampleSize})</span>` : ''}</span></div>
                         ` : ''}
                     </div>
                     ${receiveAdv ? '<div style="font-size:0.8em;opacity:0.65;">Receive: ' + receiveAdv.receivePct.toFixed(1) + '% of RPs vs ' + receiveAdv.servePct.toFixed(1) + '% serving = ' + recAdvPts.toFixed(2) + ' pts edge (n=' + receiveAdv.sampleSize + ')</div>' : ''}
@@ -10969,7 +10969,13 @@
                 p7DiffSide1: p7.p7DiffSide1,
                 p7DiffSide2: p7.p7DiffSide2,
                 side1Segments: p7.side1Segments,
-                side2Segments: p7.side2Segments
+                side2Segments: p7.side2Segments,
+                // Raw pooled P7 value (points per segment scored by whoever stands on
+                // this side, both teams combined) — the actual number side1/side2's
+                // pp-deviation-from-50% figures above are derived from, so displays can
+                // show both the raw value and its deviation instead of the pp alone.
+                pooledP7Side1: n > 0 ? (ourSide1 + theirSide2) / n : null,
+                pooledP7Side2: n > 0 ? (ourSide2 + theirSide1) / n : null
             };
         }
 
