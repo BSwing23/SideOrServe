@@ -9172,11 +9172,14 @@
             const strategies = calculateCoinTossStrategies(venueId, preMatch);
 
             if (strategies.noData) {
-                // No match/side data yet — still show the structural default (receive
-                // first requires one fewer real point to win, per CLAUDE.md's
-                // Fundamental Product Thesis) rather than nothing. This is not a
-                // theoretical RP-calculation fallback — it's a fixed mathematical fact
-                // independent of any observed data, so it's always safe to state.
+                // No VENUE/side data yet, but calculateReceiveAdvantage() is completely
+                // venue-independent (reads only userProfile.rpStats[tier], no venue
+                // filtering) — so the receive-first structural numbers can still be real
+                // whenever the coach has any RP history at all, same as the live-match
+                // "Why?" panel (~line 9384). Only fall back to the generic structural-
+                // fact line when calculateReceiveAdvantage() itself returns null, i.e.
+                // there's genuinely zero RP data anywhere, not just for this venue.
+                const _optReceiveAdv = calculateReceiveAdvantage();
                 const venueOptions = Object.entries(venues).map(([k,v]) =>
                     `<option value="${k}">${v.name}</option>`).join('');
                 content.innerHTML = `
@@ -9185,7 +9188,12 @@
                             CHOOSE RECEIVE FIRST
                         </div>
                         <div style="font-size:0.85em;opacity:0.75;">
-                            Structural default — receiving first requires one fewer real point to win. Add match data to see side-specific guidance.
+                            ${_optReceiveAdv ? `
+                                Real Points to Win: <strong>${_optReceiveAdv.rpsToWin}</strong><br>
+                                Receive first: win at ${_optReceiveAdv.receiveScenario} (need ${_optReceiveAdv.receivePct.toFixed(1)}% of RPs)<br>
+                                Serve first: win at ${_optReceiveAdv.serveScenario} (need ${_optReceiveAdv.servePct.toFixed(1)}% of RPs)<br>
+                                = <strong>${_optReceiveAdv.advantagePct.toFixed(1)}% easier</strong>
+                            ` : 'Structural default — receiving first requires one fewer real point to win. Add match data to see side-specific guidance.'}
                         </div>
                     </div>
                     <div class="stat-box">
