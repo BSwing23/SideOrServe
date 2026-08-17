@@ -9412,16 +9412,24 @@
                 </div>`;
 
 
-            function scenRow(label, sublabel, net, isWin, isBest) {
+            // net is a raw points advantage (positive helps you, negative helps them —
+            // see the "IF YOU LOSE THE TOSS" intro text above). Displayed via the same
+            // points-advantage-over-projectedTotal "X% easier" conversion used for
+            // sideAdvantagePointsPct/receiveAdvantagePointsPct elsewhere on this screen,
+            // not raw points — projTotal is passed in explicitly rather than relying on
+            // closure, so the dependency is visible at each call site.
+            function scenRow(label, sublabel, net, isWin, isBest, projTotal) {
                 const bg = isBest ? 'rgba(255,255,255,0.10)' : 'rgba(255,255,255,0.04)';
                 const border = isBest ? 'border-left:3px solid white;' : 'border-left:3px solid transparent;';
+                const pct = projTotal > 0 ? (net / projTotal) * 100 : 0;
+                const pctLabel = pct >= 0 ? 'easier' : 'harder';
                 return `<div style="padding:10px 12px;border-radius:6px;margin-bottom:6px;background:${bg};${border}">
                     <div style="display:flex;justify-content:space-between;align-items:center;">
                         <div>
                             <div style="font-weight:bold;font-size:0.9em;">${label}</div>
                             <div style="font-size:0.8em;opacity:0.65;margin-top:2px;">${sublabel}</div>
                         </div>
-                        <div style="font-size:1.2em;font-weight:bold;color:white;min-width:66px;text-align:right;">${fmt(net)} pts</div>
+                        <div style="font-size:1.2em;font-weight:bold;color:white;min-width:66px;text-align:right;">${fmt(pct)}% ${pctLabel}</div>
                     </div>
                 </div>`;
             }
@@ -9515,8 +9523,8 @@
                 <div class="stat-box" style="border-left-color:rgba(200,50,50,0.5);margin-bottom:12px;">
                     <h3 style="font-size:0.9em;opacity:0.8;margin-bottom:8px;">IF YOU LOSE THE TOSS</h3>
                     <div style="font-size:0.78em;opacity:0.6;margin-bottom:8px;">The toss winner picks one — side, or serve/receive — and you get whatever's left. Each row is your net point advantage for that outcome: positive helps you, negative helps them.</div>
-                    ${scenRow('They choose receive → you take ' + betterSide + ' side', 'You serve · ' + betterSide + ' side', scenC_net, false, scenC_net >= scenD_net)}
-                    ${scenRow('They choose ' + betterSide + ' side → you receive', 'You receive · ' + worseSide + ' side', scenD_net, false, scenD_net > scenC_net)}
+                    ${scenRow('They choose receive → you take ' + betterSide + ' side', 'You serve · ' + betterSide + ' side', scenC_net, false, scenC_net >= scenD_net, projectedTotal)}
+                    ${scenRow('They choose ' + betterSide + ' side → you receive', 'You receive · ' + worseSide + ' side', scenD_net, false, scenD_net > scenC_net, projectedTotal)}
                 </div>
 
                 <!-- P7 BY SIDE -->
