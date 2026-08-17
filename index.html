@@ -9292,6 +9292,13 @@
                 : 'CHOOSE RECEIVE FIRST';
             const heroColor = 'white';
 
+            // Always-visible receive-first structural number under the hero headline —
+            // the single most important number in the app, should not require tapping
+            // "Why?" to see. Same receiveAdv values the Why panel uses, no recompute.
+            const _heroAdvLine = receiveAdv
+                ? `Receiving first needs ${receiveAdv.receivePct.toFixed(1)}% of RPs to win (vs ${receiveAdv.servePct.toFixed(1)}% serving) — a ${receiveAdv.advantagePct.toFixed(1)}% structural edge`
+                : 'No match data yet — structural basis only. Receiving first requires one fewer real-point break to win.';
+
             // "Why?" detail text — coach-friendly 4-scenario layout
             const whyId = 'sos-why-' + Date.now();
             const qtnt = strategies.quotient ?? 0;
@@ -9351,6 +9358,15 @@
                 ? '<div style="font-size:0.85em;opacity:0.8;line-height:1.5;"><div style="margin-bottom:6px;">No match data yet — structural basis only.</div><div>Receiving first requires one fewer real-point break to win. Example: N=7 RPs to win → receive needs 53.8% of RPs vs 58.3% serving — a 4.5% structural edge.</div></div>'
                 : `<div style="font-size:0.85em;color:white;line-height:1.55;">
                     <div style="font-weight:bold;letter-spacing:0.04em;margin-bottom:8px;padding-bottom:5px;border-bottom:1px solid rgba(255,255,255,0.2);">THE RAW MATH: WHY IT SAYS THIS</div>
+                    <div style="margin-bottom:10px;padding-bottom:8px;border-bottom:1px solid rgba(255,255,255,0.12);">
+                        <div style="font-size:0.88em;font-weight:bold;opacity:0.6;margin-bottom:5px;text-transform:uppercase;letter-spacing:0.03em;">Receive-First Advantage (the structural baseline)</div>
+                        <div style="padding:5px 8px;background:rgba(255,255,255,0.06);border-radius:4px;">
+                            Real Points to Win: <strong>${receiveAdv.rpsToWin}</strong><br>
+                            Receive first: win at ${receiveAdv.receiveScenario} (need ${receiveAdv.receivePct.toFixed(1)}% of RPs)<br>
+                            Serve first: win at ${receiveAdv.serveScenario} (need ${receiveAdv.servePct.toFixed(1)}% of RPs)<br>
+                            = <strong>${receiveAdv.advantagePct.toFixed(1)}% easier</strong> / ${recAdvPts.toFixed(2)} pts edge
+                        </div>
+                    </div>
                     <div style="margin-bottom:10px;">
                         <div style="font-size:0.88em;font-weight:bold;opacity:0.6;margin-bottom:5px;text-transform:uppercase;letter-spacing:0.03em;">Our Score Cards (Points per rotation block)</div>
                         <div style="padding:5px 8px;background:rgba(255,255,255,0.06);border-radius:4px;margin-bottom:3px;">• <strong>${betterSide}</strong>${_bWStr}<br>&nbsp;&nbsp;P7 = ${_betterT.toFixed(2)}${_p5Sfx}</div>
@@ -9460,6 +9476,7 @@
                     <div style="font-size:1.75em;font-weight:900;letter-spacing:0.03em;color:${heroColor};line-height:1.15;margin-bottom:12px;">
                         ${heroText}
                     </div>
+                    <div style="font-size:0.85em;opacity:0.75;margin-bottom:12px;">${_heroAdvLine}</div>
                     <button onclick="var el=document.getElementById('${whyId}');el.style.display=el.style.display==='none'?'block':'none'"
                         style="background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.2);color:rgba(255,255,255,0.7);padding:6px 20px;border-radius:20px;font-size:0.85em;cursor:pointer;">
                         Why?
