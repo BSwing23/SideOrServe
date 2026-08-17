@@ -4908,8 +4908,13 @@
             const recAdvPts = receiveAdv
                 ? (receiveAdv.servePct - receiveAdv.receivePct) / 100 * projTotalSet3
                 : 0;
+            // Shared "X% easier" comparison metric (points advantage over projected
+            // total) — same formula used for bestAdv's side comparison above, so this
+            // is directly comparable to it. Not receiveAdv.advantagePct (the RPs-to-win
+            // threshold percentage) — that's a differently-denominated figure; see
+            // calculateCoinTossStrategies()'s sideAdvantagePointsPct comment for why.
             const recAdvText = receiveAdv
-                ? `${receiveAdv.advantagePct.toFixed(1)}% easier to receive`
+                ? `${(recAdvPts / projTotalSet3 * 100).toFixed(1)}% easier to receive`
                 : 'no receive data yet';
 
             // Side advantage for Set 3 (15-pt, P5-scaled). betterSide/worseSide just
@@ -9292,12 +9297,20 @@
                 : 'CHOOSE RECEIVE FIRST';
             const heroColor = 'white';
 
-            // Always-visible receive-first structural number under the hero headline —
-            // the single most important number in the app, should not require tapping
-            // "Why?" to see. Same receiveAdv values the Why panel uses, no recompute.
-            const _heroAdvLine = receiveAdv
-                ? `Receiving first needs ${receiveAdv.receivePct.toFixed(1)}% of RPs to win (vs ${receiveAdv.servePct.toFixed(1)}% serving) — a ${receiveAdv.advantagePct.toFixed(1)}% structural edge`
-                : 'No match data yet — structural basis only. Receiving first requires one fewer real-point break to win.';
+            // Always-visible structural number under the hero headline — the single
+            // most important number in the app, should not require tapping "Why?" to
+            // see. Matches whichever choice the headline actually recommends: when the
+            // hero says "PUT [NAME] ON [SIDE]", the line states side's edge; otherwise
+            // it states receive's edge. Both use strategies.sideAdvantagePointsPct /
+            // receiveAdvantagePointsPct — the shared, consistently-defined "X% easier"
+            // metric (points advantage over projectedTotal, same formula for both),
+            // NOT receiveAdv's own RPs-to-win threshold percentage — that figure stays
+            // displayed separately, unchanged, in its own section below.
+            const _heroAdvLine = (recState === 'B_side' && topServerName)
+                ? `Taking the ${preferredStartSideDisp} side is worth ${strategies.sideAdvantagePointsPct.toFixed(1)}% of points vs receiving first (${strategies.receiveAdvantagePointsPct.toFixed(1)}%)`
+                : receiveAdv
+                    ? `Receiving first is worth ${strategies.receiveAdvantagePointsPct.toFixed(1)}% of points vs serving first`
+                    : 'No match data yet — structural basis only. Receiving first requires one fewer real-point break to win.';
 
             // "Why?" detail text — coach-friendly 4-scenario layout
             const whyId = 'sos-why-' + Date.now();
@@ -9366,6 +9379,12 @@
                             Serve first: win at ${receiveAdv.serveScenario} (need ${receiveAdv.servePct.toFixed(1)}% of RPs)<br>
                             = <strong>${receiveAdv.advantagePct.toFixed(1)}% easier</strong> / ${recAdvPts.toFixed(2)} pts edge
                         </div>
+                    </div>
+                    <div style="margin-bottom:10px;padding-bottom:8px;border-bottom:1px solid rgba(255,255,255,0.12);">
+                        <div style="font-size:0.88em;font-weight:bold;opacity:0.6;margin-bottom:5px;text-transform:uppercase;letter-spacing:0.03em;">Side vs. Receive — Head to Head</div>
+                        <div class="stat-row"><span>Side advantage</span><span><strong>${strategies.sideAdvantagePointsPct.toFixed(1)}%</strong> of points</span></div>
+                        <div class="stat-row"><span>Receive advantage</span><span><strong>${strategies.receiveAdvantagePointsPct.toFixed(1)}%</strong> of points</span></div>
+                        <div style="font-size:0.78em;opacity:0.5;margin-top:4px;">Both expressed as a share of projected total points, so they're directly comparable — the larger one wins${currentSwingle < 4 ? ' (side still needs Swingle ≥ 4 to override receive, regardless of this comparison)' : ''}.</div>
                     </div>
                     <div style="margin-bottom:10px;">
                         <div style="font-size:0.88em;font-weight:bold;opacity:0.6;margin-bottom:5px;text-transform:uppercase;letter-spacing:0.03em;">Our Score Cards (Points per rotation block)</div>
@@ -10443,6 +10462,19 @@
             
             const sideAdvantagePoints = Math.abs(advStartingSide1 - advStartingSide2);
 
+            // "X% easier" comparison metric — shared, consistently-defined for BOTH
+            // side and receive advantage, since both are already denominated in the
+            // same unit (raw expected points over a set, per projectedTotal above).
+            // This does NOT replace receiveAdv's own RPs-to-win threshold percentages
+            // (receivePct/servePct/advantagePct) — those describe a genuinely different
+            // thing (a discrete real-points win-margin structure) and stay displayed
+            // as-is in their own section. This pair exists specifically for head-to-head
+            // side-vs-receive comparison displays, where using the RP-threshold percentage
+            // for receive alongside a raw side percentage would compare two differently-
+            // denominated numbers that only superficially look alike.
+            const sideAdvantagePointsPct = projectedTotal > 0 ? (sideAdvantagePoints / projectedTotal) * 100 : 0;
+            const receiveAdvantagePointsPct = projectedTotal > 0 ? (receiveAdvantagePoints / projectedTotal) * 100 : 0;
+
             // ── ODD / EVEN QUOTIENT ENGINE ────────────────────────────────────
             // quotient = number of full 7-pt (or 5-pt) rotation blocks in the set.
             // remainder = extra points after the last full block.
@@ -10525,6 +10557,12 @@
                 receiveAdvantagePoints: receiveAdvantagePoints,
                 receiveAdv: receiveAdv,
                 sideAdvantagePoints: sideAdvantagePoints,
+                // Shared "X% easier" comparison metric for side vs receive — both as a
+                // share of projectedTotal, NOT the RP-threshold advantagePct. See the
+                // comment above sideAdvantagePointsPct's computation for why these are
+                // kept separate from receiveAdv's own threshold percentages.
+                sideAdvantagePointsPct: sideAdvantagePointsPct,
+                receiveAdvantagePointsPct: receiveAdvantagePointsPct,
                 projectedTotal: projectedTotal,
                 preferredSide: preferredSide,           // physically better side — lose-toss default
                 preferredStartSide: preferredStartSide, // starting position that exploits the tail
