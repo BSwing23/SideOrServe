@@ -1355,7 +1355,19 @@
         };
         
         // Venue Database
+        // 'test-beach' is intentionally kept OUTSIDE the alphabetical ordering below —
+        // its isTestVenue flag makes getVenueEntriesForDropdown() always sort it first
+        // in every venue selector, regardless of its name/position here. See that
+        // function and isTestVenueId() for the display- and stats-side handling.
         const venues = {
+            'test-beach': {
+                name: '⚠️ TEST BEACH — Not counted in any stats',
+                location: { lat: 33.88374, lon: -118.41361 },
+                orientation: 'North-South',
+                program: '',
+                coach: '',
+                isTestVenue: true
+            },
             'allison-sand-courts': {
                 name: 'Allison Sand Volleyball Courts',
                 location: { lat: 37.1985, lon: -93.2812 },
@@ -1735,7 +1747,30 @@
                 coach: ''
             }
         };
-        
+
+        // True if this venueId (built-in or otherwise) is flagged as a test venue —
+        // used to exclude its sets from every personal-stats aggregation function so
+        // testing data never pollutes the coach's real RP/side/server history. Never
+        // affects the LIVE in-match view for whatever match is currently being played
+        // (that's the whole point of having a realistic test venue), only historical
+        // aggregation reads from the `sets` collection and rpStats writes.
+        function isTestVenueId(venueId) {
+            return venues[venueId]?.isTestVenue === true;
+        }
+
+        // Venue entries for dropdown/selector rendering — every real venue in its
+        // existing alphabetical order, with any isTestVenue entry (TEST BEACH) always
+        // bubbled to the front regardless of where it sits in the venues object or
+        // where it'd normally fall alphabetically. Array.prototype.sort is stable
+        // (ES2019+), so non-test entries keep their already-alphabetical relative order.
+        function getVenueEntriesForDropdown() {
+            return Object.entries(venues).sort(([, a], [, b]) => {
+                if (a.isTestVenue && !b.isTestVenue) return -1;
+                if (b.isTestVenue && !a.isTestVenue) return 1;
+                return 0;
+            });
+        }
+
         let matchSetup = {
             venue: 'bear-down-beach',
             venueName: 'Bear Down Beach (University of Arizona)',
@@ -1888,11 +1923,11 @@
             const select = document.getElementById(selectId);
             let html = '<option value="">-- Select Venue --</option>';
             
-            // Add built-in venues
-            Object.keys(venues).forEach(key => {
-                html += `<option value="${key}">${venues[key].name}</option>`;
+            // Add built-in venues — TEST BEACH always first, then alphabetical
+            getVenueEntriesForDropdown().forEach(([key, venue]) => {
+                html += `<option value="${key}">${venue.name}</option>`;
             });
-            
+
             // Add custom venues if user has any
             if (userProfile.customVenues && userProfile.customVenues.length > 0) {
                 html += '<option disabled>---Your Custom Venues---</option>';
@@ -1900,7 +1935,7 @@
                     html += `<option value="custom-${idx}">${venue.name}</option>`;
                 });
             }
-            
+
             html += '<option value="custom-new">+ Add Custom Venue</option>';
             select.innerHTML = html;
         }
@@ -2517,11 +2552,11 @@
             const select = document.getElementById('venueName');
             let html = '';
             
-            // Add built-in venues
-            Object.keys(venues).forEach(key => {
-                html += `<option value="${key}">${venues[key].name}</option>`;
+            // Add built-in venues — TEST BEACH always first, then alphabetical
+            getVenueEntriesForDropdown().forEach(([key, venue]) => {
+                html += `<option value="${key}">${venue.name}</option>`;
             });
-            
+
             // Add custom venues if user has any
             if (userProfile.customVenues && userProfile.customVenues.length > 0) {
                 html += '<option disabled>---Your Custom Venues---</option>';
@@ -4137,6 +4172,7 @@
                     const d = doc.data();
                     if (!d.complete || !d.serverStats) return;
                     if (d.includedInStats === false) return;
+                    if (isTestVenueId(d.venueId)) return;
                     const _faTier = matchSetup.competitionTier;
                     if (_faTier && d.competitionTier !== _faTier) return;
                     ['you', 'partner', 'opp1', 'opp2'].forEach(key => {
@@ -5565,7 +5601,13 @@
 
         async function updateRPStats() {
             if (!currentUser || !userProfile) return;
-            
+            // Test-venue sets are never folded into rpStats — this is the ONLY write
+            // path into the pre-aggregated counters calculateRPsToWin()/RP Averages/
+            // servedFirst/receivedFirst/roleBattle/momentum/sidePoints all read from,
+            // so excluding them here (rather than only at read time) is required —
+            // once summed into totalRPs/count, per-set attribution is unrecoverable.
+            if (isTestVenueId(matchSetup.venue)) return;
+
             const setType = matchState.maxPoints === 21 ? 'sets21' : 'sets15';
             const ourRPs = matchState.ourRealPoints || 0;
             const theirRPs = matchState.theirRealPoints || 0;
@@ -7560,6 +7602,7 @@
                         const d = doc.data();
                         if (!d.complete) return;
                         if (d.includedInStats === false) return;
+                        if (isTestVenueId(d.venueId)) return;
                         const _todayTier = matchSetup.competitionTier;
                         if (_todayTier && d.competitionTier !== _todayTier) return;
                         const ts = d.createdAt?.toDate ? d.createdAt.toDate() : new Date(d.createdAt || 0);
@@ -7579,6 +7622,7 @@
                         matchScore.setsCompleted.forEach(s => {
                             if (processedSetIds.has(s.setId)) return; // already counted
                             if (!s.matchState) return;
+                            if (isTestVenueId(s.matchSetup?.venue)) return;
                             const state = s.matchState;
                             const gameType = s.matchSetup?.gameType || s.gameType || 'regular';
                             const ourRPs = state.ourRealPoints||0, theirRPs = state.theirRealPoints||0;
@@ -8045,7 +8089,7 @@
 
                 // First Switch Win % — leader at the first side switch (7 total pts) →
                 // set win rate. Reuses this same snapshot rather than a second query.
-                const _fswDocs = sswpSnap.docs.map(d => d.data()).filter(d => d.complete && d.includedInStats !== false);
+                const _fswDocs = sswpSnap.docs.map(d => d.data()).filter(d => d.complete && d.includedInStats !== false && !isTestVenueId(d.venueId));
                 const _p7Switch = calculateFirstSwitchWinPct(_fswDocs, 'normal');
 
                 // Six checkpoint buckets: { youTotal, youWon, oppTotal, oppWon }
@@ -8060,6 +8104,7 @@
                     if (sd.gameType === 'deciding') return;
                     if (!sd.complete) return;
                     if (sd.includedInStats === false) return;
+                    if (isTestVenueId(sd.venueId)) return;
                     const ph = sd.pointHistory;
                     if (!Array.isArray(ph) || ph.length === 0) return;
 
@@ -8170,7 +8215,7 @@
 
                 // First Switch Win % — leader at the first side switch (5 total pts) →
                 // set win rate. Reuses this same snapshot rather than a second query.
-                const _fsw15Docs = sswp15Snap.docs.map(d => d.data()).filter(d => d.complete && d.includedInStats !== false);
+                const _fsw15Docs = sswp15Snap.docs.map(d => d.data()).filter(d => d.complete && d.includedInStats !== false && !isTestVenueId(d.venueId));
                 const _p5Switch = calculateFirstSwitchWinPct(_fsw15Docs, 'deciding');
 
                 // Five checkpoint buckets: { youTotal, youWon, oppTotal, oppWon }
@@ -8187,6 +8232,7 @@
                     if (sd.gameType !== 'deciding') return;
                     if (!sd.complete) return;
                     if (sd.includedInStats === false) return;
+                    if (isTestVenueId(sd.venueId)) return;
                     const ph = sd.pointHistory;
                     if (!Array.isArray(ph) || ph.length === 0) return;
 
@@ -8385,6 +8431,7 @@
                     if (currentTierFilter !== 'all' && setData.competitionTier !== currentTierFilter) return;
                     const vid = setData.venueId;
                     if (!vid) return;
+                    if (isTestVenueId(vid)) return;
                     if (competitive && !isCompetitiveSet(setData.ourScore, setData.theirScore, setData.gameType === 'deciding' ? 15 : 21)) return;
                     const vname = setData.venue || vid;
                     if (!venueData[vid]) venueData[vid] = { name: vname, sets: [] };
@@ -8748,6 +8795,7 @@
                     const d = doc.data();
                     if (!d.complete) return;
                     if (d.includedInStats === false) return;
+                    if (isTestVenueId(d.venueId)) return;
                     if (currentTierFilter !== 'all' && d.competitionTier !== currentTierFilter) return;
                     // Set type filter — deciding = 15pt, else 21pt
                     const isDeciding = d.gameType === 'deciding';
@@ -8974,6 +9022,7 @@
                     if (currentTierFilter !== 'all' && setData.competitionTier !== currentTierFilter) return;
                     const vid = setData.venueId;
                     if (!vid) return;
+                    if (isTestVenueId(vid)) return;
                     const vname = setData.venue || vid;
                     if (!venueBias[vid]) venueBias[vid] = { name: vname, sidePoints: {} };
                     setData.completedSegments.forEach(seg => {
@@ -9128,7 +9177,7 @@
                         <label style="display:block;margin-bottom:4px;font-size:0.8em;opacity:0.7;">Venue:</label>
                         <select onchange="selectCoinTossVenue(this)" style="width:100%;padding:8px;border-radius:6px;background:rgba(255,255,255,0.1);color:white;border:1px solid rgba(255,255,255,0.3);font-size:0.9em;">
                             <option value="">-- Select Venue --</option>
-                            ${Object.entries(venues).map(([k,v]) => `<option value="${k}" ${k === matchSetup.venue ? 'selected' : ''}>${v.name}</option>`).join('')}
+                            ${getVenueEntriesForDropdown().map(([k,v]) => `<option value="${k}" ${k === matchSetup.venue ? 'selected' : ''}>${v.name}</option>`).join('')}
                         </select>
                     </div>`
                 : '';
@@ -9180,7 +9229,7 @@
                 // fact line when calculateReceiveAdvantage() itself returns null, i.e.
                 // there's genuinely zero RP data anywhere, not just for this venue.
                 const _optReceiveAdv = calculateReceiveAdvantage();
-                const venueOptions = Object.entries(venues).map(([k,v]) =>
+                const venueOptions = getVenueEntriesForDropdown().map(([k,v]) =>
                     `<option value="${k}">${v.name}</option>`).join('');
                 content.innerHTML = `
                     <div style="text-align:center;padding:22px 16px 16px;margin-bottom:12px;">
@@ -9891,7 +9940,7 @@
             
             if (!matchSetup.weather || !matchSetup.weather.windSpeed) {
                 // No active match — show standalone venue picker
-                const venueOptions = Object.entries(venues).map(([k,v]) => 
+                const venueOptions = getVenueEntriesForDropdown().map(([k,v]) =>
                     `<option value="${k}">${v.name}</option>`).join('');
                 content.innerHTML = `
                     <div class="stat-box">
@@ -10754,6 +10803,7 @@
                         const d = doc.data();
                         if (!d.complete) return;
                         if (d.includedInStats === false) return;
+                        if (isTestVenueId(d.venueId)) return;
                         if (d.venueId !== venueId) return;
                         if (!matchesSwingle(d.weatherAtSetStart)) return;
                         if (competitive && !isCompetitiveSet(d.ourScore, d.theirScore, d.gameType === 'deciding' ? 15 : 21)) return;
@@ -10771,6 +10821,7 @@
                 // (e.g. saved moments ago, before this read landed).
                 (matchScore.setsCompleted || []).forEach(set => {
                     if (set.setId && processedSetIds.has(set.setId)) return;
+                    if (isTestVenueId(set.matchSetup?.venue)) return;
                     if (set.matchSetup?.venue !== venueId) return;
                     if (!matchesSwingle(set.matchState?.weatherAtSetStart)) return;
                     const setP7 = set.matchState?.p7Stats;
@@ -10825,6 +10876,7 @@
                     const d = doc.data();
                     if (!d.complete) return;
                     if (d.includedInStats === false) return;
+                    if (isTestVenueId(d.venueId)) return;
                     if (competitive && !isCompetitiveSet(d.ourScore, d.theirScore, d.gameType === 'deciding' ? 15 : 21)) return;
                     const p7 = d.p7Stats;
                     if (!p7?.side1 || !p7?.side2) return;
@@ -10837,6 +10889,7 @@
                 // (e.g. saved moments ago, before this read landed).
                 (matchScore.setsCompleted || []).forEach(set => {
                     if (set.setId && processedSetIds.has(set.setId)) return;
+                    if (isTestVenueId(set.matchSetup?.venue)) return;
                     const setP7 = set.matchState?.p7Stats;
                     if (!setP7) return;
                     accumulate(setP7.side1);
@@ -10914,6 +10967,7 @@
                         const d = doc.data();
                         if (!d.complete) return;
                         if (d.includedInStats === false) return;
+                        if (isTestVenueId(d.venueId)) return;
                         if (d.orientation !== orientation) return;
                         if (!matchesSwingle(d.weatherAtSetStart)) return;
                         if (competitive && !isCompetitiveSet(d.ourScore, d.theirScore, d.gameType === 'deciding' ? 15 : 21)) return;
@@ -10929,6 +10983,7 @@
 
                 (matchScore.setsCompleted || []).forEach(set => {
                     if (set.setId && processedSetIds.has(set.setId)) return;
+                    if (isTestVenueId(set.matchSetup?.venue)) return;
                     if (set.matchSetup?.orientation !== orientation) return;
                     if (!matchesSwingle(set.matchState?.weatherAtSetStart)) return;
                     const setP7 = set.matchState?.p7Stats;
@@ -11169,7 +11224,7 @@
                                 setsSnap.docs
                                     .filter(d => {
                                         const owners = d.data().owners || [];
-                                        return owners.includes(partner.partnerId) && d.data().complete;
+                                        return owners.includes(partner.partnerId) && d.data().complete && !isTestVenueId(d.data().venueId);
                                     })
                                     .map(d => d.data().matchId)
                                     .filter(Boolean)
