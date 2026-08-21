@@ -1820,6 +1820,8 @@
                         console.log('[PROFILE] Loaded profile:', userProfile);
                         if ((userProfile.role || 'manager') === 'coach') showCommandCenterScreen();
                         else showHomeScreen();
+                        // Fire-and-forget, one-time-per-account — never blocks login/screen show.
+                        migrateHiddenMatchSets();
                     } else {
                         console.log('[PROFILE] No profile found, showing setup');
                         showProfileSetup();
@@ -6664,14 +6666,68 @@
                 for (const doc of userMatchQuery.docs) {
                     await doc.ref.update({ hiddenByOwner: true });
                 }
+
+                // Also exclude this match's own set documents from all-time aggregates —
+                // Side Bias, Side Advantage, Server Performance, Score-State Win
+                // Probability, and the historical Coin Toss data all query the `sets`
+                // collection directly, so hiding just the match record left every one
+                // of those still counting a "deleted" match's sets. Never hard-delete:
+                // the same doc may be shared with a paired partner via `owners`, so this
+                // only excludes it from stats — same reversible pattern already used by
+                // clearAllHistory() and the per-set includedInStats toggle, applied here
+                // at the match level.
+                const matchSetsSnap = await db.collection('sets')
+                    .where('userId', '==', currentUser.uid)
+                    .where('matchId', '==', matchId)
+                    .get();
+                for (const doc of matchSetsSnap.docs) {
+                    await doc.ref.update({ includedInStats: false });
+                }
+
                 showMatchHistory();
-                
+
             } catch (error) {
                 console.error('[DELETE] Error:', error);
                 alert('Error removing match. Please try again.');
             }
         }
-        
+
+        // One-time retroactive fix: matches "deleted" via deleteMatch() before this
+        // commit only ever got hiddenByOwner: true — their sets docs were never
+        // excluded from stats, so they kept silently counting toward RP Averages,
+        // Side Advantage, Server Performance, Score-State Win Probability, etc. Finds
+        // every already-hidden match's matchId and applies the same includedInStats:
+        // false exclusion to its sets docs, exactly once per account (guarded by
+        // hiddenMatchSetsMigrated on the player doc so it never re-runs). Best-effort
+        // and silent, like the app's other background fixes — never blocks login.
+        async function migrateHiddenMatchSets() {
+            if (!currentUser || !userProfile || userProfile.hiddenMatchSetsMigrated) return;
+            try {
+                const userMatchesRef = db.collection('players').doc(currentUser.uid).collection('matches');
+                const hiddenMatchesSnap = await userMatchesRef.where('hiddenByOwner', '==', true).get();
+                const matchIds = [...new Set(hiddenMatchesSnap.docs.map(doc => doc.data().matchId).filter(Boolean))];
+
+                let fixedSetsCount = 0;
+                for (const matchId of matchIds) {
+                    const setsSnap = await db.collection('sets')
+                        .where('userId', '==', currentUser.uid)
+                        .where('matchId', '==', matchId)
+                        .get();
+                    for (const doc of setsSnap.docs) {
+                        if (doc.data().includedInStats === false) continue;
+                        await doc.ref.update({ includedInStats: false });
+                        fixedSetsCount++;
+                    }
+                }
+
+                await db.collection('players').doc(currentUser.uid).update({ hiddenMatchSetsMigrated: true });
+                userProfile.hiddenMatchSetsMigrated = true;
+                console.log(`[MIGRATION] Retroactively excluded ${fixedSetsCount} set(s) across ${matchIds.length} previously-deleted match(es) from stats.`);
+            } catch (error) {
+                console.error('[MIGRATION] hiddenMatchSets fix error:', error);
+            }
+        }
+
         async function clearAllHistory() {
             const userInput = prompt('Clear ALL match history and reset ALL stats to zero?\n\nType "CLEAR" to confirm:');
             
