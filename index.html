@@ -5681,49 +5681,14 @@
                 updates[`rpStats.${tier}.${setType}.losers.count`] = firebase.firestore.FieldValue.increment(1);
             }
 
-            // V15: if this was a 21-pt set with a virtual15 capture, also record into sets15
-            if (setType === 'sets21' && matchState.virtual15Captured && matchState.virtual15) {
-                const v = matchState.virtual15;
-                const v15OurRPs   = v.actualRPs?.our   || 0;
-                const v15TheirRPs = v.actualRPs?.their || 0;
-                const v15WeWinning = v.actualScore.our > v.actualScore.their;
-                updates[`rpStats.${tier}.sets15.ourTeam.totalRPs`] = firebase.firestore.FieldValue.increment(v15OurRPs);
-                updates[`rpStats.${tier}.sets15.ourTeam.count`] = firebase.firestore.FieldValue.increment(1);
-                updates[`rpStats.${tier}.sets15.opponents.totalRPs`] = firebase.firestore.FieldValue.increment(v15TheirRPs);
-                updates[`rpStats.${tier}.sets15.opponents.count`] = firebase.firestore.FieldValue.increment(1);
-                if (v15WeWinning) {
-                    updates[`rpStats.${tier}.sets15.winners.totalRPs`] = firebase.firestore.FieldValue.increment(v15OurRPs);
-                    updates[`rpStats.${tier}.sets15.winners.count`] = firebase.firestore.FieldValue.increment(1);
-                    updates[`rpStats.${tier}.sets15.losers.totalRPs`] = firebase.firestore.FieldValue.increment(v15TheirRPs);
-                    updates[`rpStats.${tier}.sets15.losers.count`] = firebase.firestore.FieldValue.increment(1);
-                } else {
-                    updates[`rpStats.${tier}.sets15.winners.totalRPs`] = firebase.firestore.FieldValue.increment(v15TheirRPs);
-                    updates[`rpStats.${tier}.sets15.winners.count`] = firebase.firestore.FieldValue.increment(1);
-                    updates[`rpStats.${tier}.sets15.losers.totalRPs`] = firebase.firestore.FieldValue.increment(v15OurRPs);
-                    updates[`rpStats.${tier}.sets15.losers.count`] = firebase.firestore.FieldValue.increment(1);
-                }
-                if (isCompetitive) {
-                    updates[`rpStats.${tier}.sets15.totalPointsSum`] = firebase.firestore.FieldValue.increment(v.totalPoints || 30);
-                    updates[`rpStats.${tier}.sets15.competitiveCount`] = firebase.firestore.FieldValue.increment(1);
-                }
-                if (servingTeamWon) {
-                    updates[`rpStats.${tier}.sets15.servingTeamWins`] = firebase.firestore.FieldValue.increment(1);
-                    updates[`rpStats.${tier}.sets15.servedFirst.total`] = firebase.firestore.FieldValue.increment(1);
-                    updates[`rpStats.${tier}.sets15.servedFirst.won`] = firebase.firestore.FieldValue.increment(1);
-                } else {
-                    updates[`rpStats.${tier}.sets15.receivingTeamWins`] = firebase.firestore.FieldValue.increment(1);
-                    updates[`rpStats.${tier}.sets15.receivedFirst.total`] = firebase.firestore.FieldValue.increment(1);
-                    updates[`rpStats.${tier}.sets15.receivedFirst.won`] = firebase.firestore.FieldValue.increment(1);
-                }
-                if (blockerMatchupWinner === 'our') {
-                    updates[`rpStats.${tier}.sets15.roleBattle.blocker.total`] = firebase.firestore.FieldValue.increment(1);
-                    if (weWon) updates[`rpStats.${tier}.sets15.roleBattle.blocker.won`] = firebase.firestore.FieldValue.increment(1);
-                }
-                if (defenderMatchupWinner === 'our') {
-                    updates[`rpStats.${tier}.sets15.roleBattle.defender.total`] = firebase.firestore.FieldValue.increment(1);
-                    if (weWon) updates[`rpStats.${tier}.sets15.roleBattle.defender.won`] = firebase.firestore.FieldValue.increment(1);
-                }
-            }
+            // NOTE: V15 (virtual-15 snapshot derived from a 21-pt set) is deliberately
+            // NOT folded into rpStats.{tier}.sets15.* here. Per coach decision, V15 is
+            // scoped ONLY to the switch/serve-count math display ("In 15-pt sets you
+            // switch N times...", buildSideAdvantageSection()'s totalPointsSum15, and
+            // the live "SCORE AT 15-POINT THRESHOLD" box) — it must never count toward
+            // RP Averages, servedFirst/receivedFirst, roleBattle, or any other 15-point
+            // stat, live or historical. A V15 fold-in block used to live here; removed
+            // so real 15-pt sets (gameType==='deciding') are the only sets15 signal.
 
             // Serve/receive wins
             if (servingTeamWon) {
@@ -5854,12 +5819,12 @@
         // below for why the coin-toss engine's calculateRPsToWin() is NOT converted).
         //
         // Every per-set calculation here is an EXACT port of updateRPStats()'s own
-        // math — same field names, same branches, including its V15-fold quirk where
-        // servingTeamWins/servedFirst/receivedFirst/roleBattle.won for the sets15
-        // bucket reuse the OUTER 21-pt set's own servingTeamWon/weWon rather than the
-        // V15 virtual snapshot's own outcome. That's what updateRPStats() actually
-        // does — faithfully replicated, not "fixed", so this stays a true 1:1 port
-        // and matches existing rpStats on today's (undeleted) data exactly.
+        // math — same field names, same branches — with one deliberate divergence:
+        // updateRPStats() used to fold V15 (virtual-15 snapshots derived from 21-pt
+        // sets) into rpStats.{tier}.sets15.*; per coach decision, V15 is now scoped
+        // ONLY to the switch/serve-count math display, so neither this function nor
+        // updateRPStats() folds it into sets15 anymore — the sets15 bucket here only
+        // ever counts real 15-pt (gameType==='deciding') sets.
         //
         // firstServerIsYour is recovered algebraically from the stored servingTeamWon
         // field (no separate "who served first" field is saved per set):
@@ -5985,41 +5950,11 @@
                     if (longestStreakTeamWon) result.momentum.longestStreak.won++;
                 }
 
-                // V15 fold — see the exact-replication note above the function for why
-                // this reuses the outer set's servingTeamWon/weWon/matchup outcome.
-                if (setType === 'sets21' && d.virtual15) {
-                    const v = d.virtual15;
-                    const v15OurRPs = v.actualRPs?.our || 0;
-                    const v15TheirRPs = v.actualRPs?.their || 0;
-                    const v15WeWinning = v.actualScore?.our > v.actualScore?.their;
-                    const b15 = result.sets15;
-                    b15.ourTeam.totalRPs += v15OurRPs; b15.ourTeam.count++;
-                    b15.opponents.totalRPs += v15TheirRPs; b15.opponents.count++;
-                    if (v15WeWinning) {
-                        b15.winners.totalRPs += v15OurRPs; b15.winners.count++;
-                        b15.losers.totalRPs += v15TheirRPs; b15.losers.count++;
-                    } else {
-                        b15.winners.totalRPs += v15TheirRPs; b15.winners.count++;
-                        b15.losers.totalRPs += v15OurRPs; b15.losers.count++;
-                    }
-                    if (servingTeamWon) {
-                        b15.servingTeamWins++;
-                        b15.servedFirst.total++;
-                        b15.servedFirst.won++;
-                    } else {
-                        b15.receivingTeamWins++;
-                        b15.receivedFirst.total++;
-                        b15.receivedFirst.won++;
-                    }
-                    if (blockerMatchupWinner === 'our') {
-                        b15.roleBattle.blocker.total++;
-                        if (weWon) b15.roleBattle.blocker.won++;
-                    }
-                    if (defenderMatchupWinner === 'our') {
-                        b15.roleBattle.defender.total++;
-                        if (weWon) b15.roleBattle.defender.won++;
-                    }
-                }
+                // NOTE: no V15 fold here, by coach decision — V15 (virtual-15 snapshot
+                // from a 21-pt set) is scoped ONLY to the switch/serve-count math
+                // display, never to RP Averages/servedFirst/roleBattle/momentum. The
+                // sets15 bucket only ever accumulates real 15-pt (gameType==='deciding')
+                // sets, via the setType branch above.
             };
 
             try {
@@ -8280,7 +8215,7 @@
             // Helper: render full 4-row table for both set types
             function tableFromSets(b21, b15, label) {
                 const b = currentSetType === '15' ? b15 : b21;
-                const typeLabel = currentSetType === '15' ? '15-Point Sets + V15' : '21-Point Sets';
+                const typeLabel = currentSetType === '15' ? '15-Point Sets' : '21-Point Sets';
                 return `
                     <div class="stat-box">
                         <h3>📊 RP AVERAGES — ${label.toUpperCase()}</h3>
@@ -8306,11 +8241,8 @@
                 const b21 = emptyB(), b15 = emptyB();
                 const bucket = displayState.gameType === 'deciding' ? b15 : b21;
                 accum(bucket, displayState.ourRealPoints||0, displayState.theirRealPoints||0, displayState.ourScore > displayState.theirScore);
-                // V15: also feed 15-pt bucket from virtual15 capture
-                if (displayState.gameType !== 'deciding' && displayState.virtual15Captured && displayState.virtual15) {
-                    const v = displayState.virtual15;
-                    accum(b15, v.actualRPs?.our||0, v.actualRPs?.their||0, v.actualScore.our > v.actualScore.their);
-                }
+                // V15 deliberately NOT folded in here — RP Averages counts real 15-pt
+                // (gameType==='deciding') sets only; V15 is scoped to switch/serve-count math.
                 return tableFromSets(b21, b15, 'This Set');
             }
 
@@ -8322,20 +8254,12 @@
                     const st = s.matchState, su = s.matchSetup;
                     const bucket = su?.gameType === 'deciding' ? b15 : b21;
                     accum(bucket, st.ourRealPoints||0, st.theirRealPoints||0, st.ourScore > st.theirScore);
-                    // V15 from completed sets
-                    if (su?.gameType !== 'deciding' && st.virtual15Captured && st.virtual15) {
-                        const v = st.virtual15;
-                        accum(b15, v.actualRPs?.our||0, v.actualRPs?.their||0, v.actualScore.our > v.actualScore.their);
-                    }
+                    // V15 deliberately NOT folded in — see "This Set" branch above.
                 });
                 if (matchState.setActive) {
                     const bucket = matchState.gameType === 'deciding' ? b15 : b21;
                     accum(bucket, matchState.ourRealPoints||0, matchState.theirRealPoints||0, matchState.ourScore > matchState.theirScore);
-                    // V15 from active set
-                    if (matchState.gameType !== 'deciding' && matchState.virtual15Captured && matchState.virtual15) {
-                        const v = matchState.virtual15;
-                        accum(b15, v.actualRPs?.our||0, v.actualRPs?.their||0, v.actualScore.our > v.actualScore.their);
-                    }
+                    // V15 deliberately NOT folded in — see "This Set" branch above.
                 }
                 return tableFromSets(b21, b15, 'This Match');
             }
