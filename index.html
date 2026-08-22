@@ -5841,6 +5841,206 @@
             }
         }
 
+        // ── Live re-implementation of userProfile.rpStats[tier], read from the sets
+        // collection instead of the pre-aggregated Firestore counters above.
+        //
+        // updateRPStats()'s increment-based counters never get corrected when a set
+        // is later excluded (deleted match, includedInStats: false, test venue) —
+        // exactly the gap found in the deleteMatch() fix. Side Bias, Side Advantage,
+        // Server Performance, Score-State Win Probability, and First Switch Win % all
+        // avoid this by querying `sets` live, filtered by userId + includedInStats +
+        // isTestVenueId; this function brings RP Averages/servedFirst/roleBattle/
+        // momentum in line with that same architecture, for the Data tab only (see
+        // below for why the coin-toss engine's calculateRPsToWin() is NOT converted).
+        //
+        // Every per-set calculation here is an EXACT port of updateRPStats()'s own
+        // math — same field names, same branches, including its V15-fold quirk where
+        // servingTeamWins/servedFirst/receivedFirst/roleBattle.won for the sets15
+        // bucket reuse the OUTER 21-pt set's own servingTeamWon/weWon rather than the
+        // V15 virtual snapshot's own outcome. That's what updateRPStats() actually
+        // does — faithfully replicated, not "fixed", so this stays a true 1:1 port
+        // and matches existing rpStats on today's (undeleted) data exactly.
+        //
+        // firstServerIsYour is recovered algebraically from the stored servingTeamWon
+        // field (no separate "who served first" field is saved per set):
+        //   servingTeamWon = (firstServer==='your' && weWon) || (firstServer==='their' && !weWon)
+        //   =>  firstServerIsYour === (weWon === servingTeamWon)
+        //
+        // Scope note: calculateRPsToWin()/calculateReceiveAdvantage()/
+        // calculateCoinTossStrategies() are NOT converted to use this — they're
+        // plain sync functions called synchronously from 12+ places across the
+        // entire coin-toss recommendation engine (hero directive, Why panel, Set 3
+        // guidance, Quick Tools, Weather tab, plus a self-test suite). Converting
+        // them would cascade async through that whole chain, which is a much larger
+        // and riskier change to the app's most carefully-tuned feature than this fix
+        // calls for — left reading the legacy rpStats as-is, as a deliberate scope
+        // boundary, not an oversight.
+        async function calculateRPStatsLive(tier) {
+            const emptySetBucket = () => ({
+                ourTeam: { totalRPs: 0, count: 0 },
+                opponents: { totalRPs: 0, count: 0 },
+                winners: { totalRPs: 0, count: 0 },
+                losers: { totalRPs: 0, count: 0 },
+                servedFirst: { total: 0, won: 0 },
+                receivedFirst: { total: 0, won: 0 },
+                servingTeamWins: 0,
+                receivingTeamWins: 0,
+                roles: {
+                    ourBlocker: { totalPS: 0, count: 0 },
+                    ourDefender: { totalPS: 0, count: 0 },
+                    theirBlocker: { totalPS: 0, count: 0 },
+                    theirDefender: { totalPS: 0, count: 0 }
+                },
+                roleBattle: { blocker: { total: 0, won: 0 }, defender: { total: 0, won: 0 } }
+            });
+            const result = {
+                sets21: emptySetBucket(),
+                sets15: emptySetBucket(),
+                momentum: {
+                    our: { run3: { total: 0, won: 0 }, run4: { total: 0, won: 0 }, run5: { total: 0, won: 0 } },
+                    their: { run3: { total: 0, won: 0 }, run4: { total: 0, won: 0 }, run5: { total: 0, won: 0 } },
+                    longestStreak: { total: 0, won: 0 }
+                }
+            };
+            if (!currentUser) return result;
+
+            const accumulateSet = (d) => {
+                const setType = d.gameType === 'deciding' ? 'sets15' : 'sets21';
+                const b = result[setType];
+
+                const ourRPs = d.ourRealPoints || 0;
+                const theirRPs = d.theirRealPoints || 0;
+                const weWon = (d.ourScore || 0) > (d.theirScore || 0);
+                const servingTeamWon = !!d.servingTeamWon;
+
+                b.ourTeam.totalRPs += ourRPs; b.ourTeam.count++;
+                b.opponents.totalRPs += theirRPs; b.opponents.count++;
+                if (weWon) {
+                    b.winners.totalRPs += ourRPs; b.winners.count++;
+                    b.losers.totalRPs += theirRPs; b.losers.count++;
+                } else {
+                    b.winners.totalRPs += theirRPs; b.winners.count++;
+                    b.losers.totalRPs += ourRPs; b.losers.count++;
+                }
+
+                if (servingTeamWon) b.servingTeamWins++; else b.receivingTeamWins++;
+
+                const firstServerIsYour = (weWon === servingTeamWon);
+                if (firstServerIsYour) {
+                    b.servedFirst.total++;
+                    if (weWon) b.servedFirst.won++;
+                } else {
+                    b.receivedFirst.total++;
+                    if (weWon) b.receivedFirst.won++;
+                }
+
+                const ourBlockerKey    = (d.playerRole    || '').toLowerCase() === 'blocker'  ? 'you'  : 'partner';
+                const ourDefenderKey   = (d.playerRole    || '').toLowerCase() === 'defender' ? 'you'  : 'partner';
+                const theirBlockerKey  = (d.opponent1Role || '').toLowerCase() === 'blocker'  ? 'opp1' : 'opp2';
+                const theirDefenderKey = (d.opponent1Role || '').toLowerCase() === 'defender' ? 'opp1' : 'opp2';
+                const ss = d.serverStats || {};
+                const ourBlockerPS    = ss[ourBlockerKey]?.ps    || 0;
+                const ourDefenderPS   = ss[ourDefenderKey]?.ps   || 0;
+                const theirBlockerPS  = ss[theirBlockerKey]?.ps  || 0;
+                const theirDefenderPS = ss[theirDefenderKey]?.ps || 0;
+                const blockerMatchupWinner  = ourBlockerPS  > theirBlockerPS  ? 'our' : theirBlockerPS  > ourBlockerPS  ? 'their' : 'tie';
+                const defenderMatchupWinner = ourDefenderPS > theirDefenderPS ? 'our' : theirDefenderPS > ourDefenderPS ? 'their' : 'tie';
+
+                b.roles.ourBlocker.totalPS += ourBlockerPS; b.roles.ourBlocker.count++;
+                b.roles.ourDefender.totalPS += ourDefenderPS; b.roles.ourDefender.count++;
+                b.roles.theirBlocker.totalPS += theirBlockerPS; b.roles.theirBlocker.count++;
+                b.roles.theirDefender.totalPS += theirDefenderPS; b.roles.theirDefender.count++;
+
+                if (blockerMatchupWinner === 'our') {
+                    b.roleBattle.blocker.total++;
+                    if (weWon) b.roleBattle.blocker.won++;
+                }
+                if (defenderMatchupWinner === 'our') {
+                    b.roleBattle.defender.total++;
+                    if (weWon) b.roleBattle.defender.won++;
+                }
+
+                // Momentum — tier-level, pooled across both set types (matches the
+                // write side: rpStats.{tier}.momentum, never nested under setType).
+                let maxOurRun = 0, maxTheirRun = 0, curRun = 0, curTeam = null;
+                (d.pointHistory || []).forEach(pt => {
+                    if (pt.team === curTeam) curRun++;
+                    else { curTeam = pt.team; curRun = 1; }
+                    if (pt.team === 'our') maxOurRun = Math.max(maxOurRun, curRun);
+                    else maxTheirRun = Math.max(maxTheirRun, curRun);
+                });
+                [3, 4, 5].forEach(runLen => {
+                    if (maxOurRun >= runLen) {
+                        result.momentum.our[`run${runLen}`].total++;
+                        if (weWon) result.momentum.our[`run${runLen}`].won++;
+                    }
+                    if (maxTheirRun >= runLen) {
+                        result.momentum.their[`run${runLen}`].total++;
+                        if (!weWon) result.momentum.their[`run${runLen}`].won++;
+                    }
+                });
+                if (maxOurRun !== maxTheirRun) {
+                    result.momentum.longestStreak.total++;
+                    const longestStreakTeamWon = (maxOurRun > maxTheirRun && weWon) || (maxTheirRun > maxOurRun && !weWon);
+                    if (longestStreakTeamWon) result.momentum.longestStreak.won++;
+                }
+
+                // V15 fold — see the exact-replication note above the function for why
+                // this reuses the outer set's servingTeamWon/weWon/matchup outcome.
+                if (setType === 'sets21' && d.virtual15) {
+                    const v = d.virtual15;
+                    const v15OurRPs = v.actualRPs?.our || 0;
+                    const v15TheirRPs = v.actualRPs?.their || 0;
+                    const v15WeWinning = v.actualScore?.our > v.actualScore?.their;
+                    const b15 = result.sets15;
+                    b15.ourTeam.totalRPs += v15OurRPs; b15.ourTeam.count++;
+                    b15.opponents.totalRPs += v15TheirRPs; b15.opponents.count++;
+                    if (v15WeWinning) {
+                        b15.winners.totalRPs += v15OurRPs; b15.winners.count++;
+                        b15.losers.totalRPs += v15TheirRPs; b15.losers.count++;
+                    } else {
+                        b15.winners.totalRPs += v15TheirRPs; b15.winners.count++;
+                        b15.losers.totalRPs += v15OurRPs; b15.losers.count++;
+                    }
+                    if (servingTeamWon) {
+                        b15.servingTeamWins++;
+                        b15.servedFirst.total++;
+                        b15.servedFirst.won++;
+                    } else {
+                        b15.receivingTeamWins++;
+                        b15.receivedFirst.total++;
+                        b15.receivedFirst.won++;
+                    }
+                    if (blockerMatchupWinner === 'our') {
+                        b15.roleBattle.blocker.total++;
+                        if (weWon) b15.roleBattle.blocker.won++;
+                    }
+                    if (defenderMatchupWinner === 'our') {
+                        b15.roleBattle.defender.total++;
+                        if (weWon) b15.roleBattle.defender.won++;
+                    }
+                }
+            };
+
+            try {
+                const snapshot = await db.collection('sets')
+                    .where('userId', '==', currentUser.uid)
+                    .limit(500).get();
+                snapshot.docs.forEach(doc => {
+                    const d = doc.data();
+                    if (!d.complete) return;
+                    if (d.includedInStats === false) return;
+                    if (isTestVenueId(d.venueId)) return;
+                    if (tier && d.competitionTier !== tier) return;
+                    accumulateSet(d);
+                });
+            } catch (e) {
+                console.error('[RP STATS LIVE] Query error:', e);
+            }
+
+            return result;
+        }
+
         // ── Pooled Venue Stats (cross-subscriber, built-in venues only) ─────────
         // Builds a shared "does wind favor a side at this venue" database across every
         // Side or Serve subscriber who's played there, grouped by venue + competition
@@ -7832,15 +8032,38 @@
             }
             
             // ── ALL SECTIONS — same for every scope/type permutation ────────
-            // Pull tier-specific rpStats bucket; fall back to legacy untiered root for pre-tier data.
-            // Today/All Time scopes defer to the Data tab's own tier filter (when a specific tier
-            // is selected there) rather than the live match's tier — This Set/This Match scopes
-            // have no such filter, so they keep using the live match's tier.
+            // Tier-specific bucket. Today/All Time scopes defer to the Data tab's own
+            // tier filter (when a specific tier is selected there) rather than the
+            // live match's tier — This Set/This Match scopes have no such filter, so
+            // they keep using the live match's tier.
             const _histScopeForTier = currentDataScope === 'today' || currentDataScope === 'allTime';
             const _dataTier = (_histScopeForTier && currentTierFilter !== 'all')
                 ? currentTierFilter
                 : (matchSetup.competitionTier || 'NCAA_Pro');
-            const stats = userProfile?.rpStats?.[_dataTier] || userProfile?.rpStats;
+            // Live query over `sets`, not the pre-aggregated userProfile.rpStats —
+            // see calculateRPStatsLive()'s comment for why (deleted/excluded matches
+            // never got subtracted from the old running-total counters).
+            const stats = await calculateRPStatsLive(_dataTier);
+            // VERIFICATION AID: compare the new live-query numbers against the legacy
+            // pre-aggregated rpStats on this same tier, logged to console only (no UI
+            // change) — parity here on an account with no deleted/excluded matches is
+            // the real-data confirmation that calculateRPStatsLive() is a faithful
+            // port; a divergence is EXPECTED once any match has actually been deleted
+            // or a set flagged includedInStats:false (legacy still counts it forever,
+            // live correctly stops).
+            {
+                const _legacy = userProfile?.rpStats?.[_dataTier] || userProfile?.rpStats;
+                if (_legacy) {
+                    console.log('[RP STATS LIVE vs LEGACY]', {
+                        tier: _dataTier,
+                        sets21: { live: { count: stats.sets21.ourTeam.count, ourRPs: stats.sets21.ourTeam.totalRPs, servedFirst: stats.sets21.servedFirst, receivedFirst: stats.sets21.receivedFirst },
+                                  legacy: { count: _legacy.sets21?.ourTeam?.count, ourRPs: _legacy.sets21?.ourTeam?.totalRPs, servedFirst: _legacy.sets21?.servedFirst, receivedFirst: _legacy.sets21?.receivedFirst } },
+                        sets15: { live: { count: stats.sets15.ourTeam.count, ourRPs: stats.sets15.ourTeam.totalRPs, servedFirst: stats.sets15.servedFirst, receivedFirst: stats.sets15.receivedFirst },
+                                  legacy: { count: _legacy.sets15?.ourTeam?.count, ourRPs: _legacy.sets15?.ourTeam?.totalRPs, servedFirst: _legacy.sets15?.servedFirst, receivedFirst: _legacy.sets15?.receivedFirst } },
+                        momentum: { live: stats.momentum.longestStreak, legacy: _legacy.momentum?.longestStreak }
+                    });
+                }
+            }
             const isLiveScope = currentDataScope === 'thisSet' || currentDataScope === 'thisMatch';
             const isHistScope = currentDataScope === 'today' || currentDataScope === 'allTime';
 
