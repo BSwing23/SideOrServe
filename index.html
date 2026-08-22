@@ -2111,12 +2111,12 @@
             const venueKey = document.getElementById('quickCoinTossVenue')?.value || null;
             const quickTier = matchSetup?.competitionTier || 'NCAA_Pro';
             const { p7Data: historicalP7Data, source: p7Source } = venueKey
-                ? await resolveWindConditionedP7Data(venueKey, quickTier, beaufortLevel, sides[0], sides[1])
+                ? await resolveWindConditionedP7Data(venueKey, quickTier, beaufortLevel, sides[0], sides[1], true, false)
                 : { p7Data: { hasData: false }, source: 'none' };
             // Pooled side-strength ratios — confidence-graduated fallback (same venue/wind
             // → same wind any venue with this orientation → same venue any wind → thinnest
             // available). See calculatePooledSideRatios() / calculateCoinTossStrategies().
-            const pooledSideRatios = venueKey ? await calculatePooledSideRatios(venueKey, orientation, beaufortLevel, true) : null;
+            const pooledSideRatios = venueKey ? await calculatePooledSideRatios(venueKey, orientation, beaufortLevel, true, false) : null;
             const strategies = calculateCoinTossStrategies(venueKey, {
                 historicalP7Data,
                 side1Name: sides[0],
@@ -4892,12 +4892,12 @@
             const venueId = matchSetup.venue || null;
             const tier = matchSetup.competitionTier || 'NCAA_Pro';
             const swingleLevel = Math.round(matchSetup.weather?.beaufortForce ?? 0);
-            const resolved = await resolveWindConditionedP7Data(venueId, tier, swingleLevel, sides[0], sides[1]);
+            const resolved = await resolveWindConditionedP7Data(venueId, tier, swingleLevel, sides[0], sides[1], true, true);
             // Pooled side-strength ratios — confidence-graduated fallback (same venue/wind
             // → same wind any venue with this orientation → same venue any wind → thinnest
             // available). See calculatePooledSideRatios() / calculateCoinTossStrategies().
             const orientationS3 = prevSetup.orientation || 'North-South';
-            const pooledSideRatios = await calculatePooledSideRatios(venueId, orientationS3, swingleLevel, true);
+            const pooledSideRatios = await calculatePooledSideRatios(venueId, orientationS3, swingleLevel, true, true);
 
             // Build coin toss recommendation from match data
             const strategies = calculateCoinTossStrategies(venueId, {
@@ -6109,17 +6109,21 @@
         //   3. This user's own data at this venue under any wind condition
         // Returns { p7Data, source } — source is one of 'personal-wind' | 'pooled-wind' |
         // 'personal-any' | 'none', used to label the recommendation honestly in the UI.
-        async function resolveWindConditionedP7Data(venueId, tier, swingleLevel, side1Name, side2Name, competitive = true) {
+        async function resolveWindConditionedP7Data(venueId, tier, swingleLevel, side1Name, side2Name, competitive = true, isDeciding = null) {
             if (venueId) {
-                const personalWind = await calculateHistoricalP7StatsForVenue(venueId, competitive, swingleLevel);
+                const personalWind = await calculateHistoricalP7StatsForVenue(venueId, competitive, swingleLevel, isDeciding);
                 if (personalWind.hasData) return { p7Data: personalWind, source: 'personal-wind' };
 
+                // KNOWN GAP (not fixed here — cross-subscriber pooling is explicitly
+                // deferred per standing decision): updatePooledVenueStats()/
+                // fetchPooledVenueStats() don't split by set type either, so this
+                // pooled-wind path can still mix 21-pt and 15-pt segments together.
                 const pooled = await fetchPooledVenueStats(venueId, tier);
                 const pooledBucket = pooled?.swingle?.['sw' + swingleLevel];
                 const pooledP7 = computeP7StatsFromPooledBucket(pooledBucket, side1Name, side2Name);
                 if (pooledP7.hasData) return { p7Data: pooledP7, source: 'pooled-wind' };
 
-                const personalAny = await calculateHistoricalP7StatsForVenue(venueId, competitive);
+                const personalAny = await calculateHistoricalP7StatsForVenue(venueId, competitive, null, isDeciding);
                 if (personalAny.hasData) return { p7Data: personalAny, source: 'personal-any' };
             }
 
@@ -7037,9 +7041,12 @@
                             if (s1 !== null && s2 !== null) {
                                 const better = s1 > s2 ? s1name : s2name;
                                 const adv = Math.abs(s1 - s2).toFixed(1);
+                                // Display-only: P5 label for this specific set if it was a
+                                // 15-pt (deciding) set, P7 otherwise.
+                                const _sideP7Label = sd.gameType === 'deciding' ? 'P5' : 'P7';
                                 sideHtml = `
                                 <div style="margin-top:8px; padding-top:8px; border-top:1px solid rgba(255,255,255,0.1);">
-                                    <div style="font-size:0.8em; opacity:0.6; margin-bottom:4px; text-transform:uppercase; letter-spacing:0.05em;">Side P7</div>
+                                    <div style="font-size:0.8em; opacity:0.6; margin-bottom:4px; text-transform:uppercase; letter-spacing:0.05em;">Side ${_sideP7Label}</div>
                                     <div class="profile-row"><span class="profile-label">${s1name}:</span><span>${s1}</span></div>
                                     <div class="profile-row"><span class="profile-label">${s2name}:</span><span>${s2}</span></div>
                                     <div class="profile-row"><span class="profile-label">Better side:</span><span style="color:white;">${better} (+${adv})</span></div>
@@ -7152,6 +7159,9 @@
                 const p7s1our = avg(p7s.side1?.our), p7s1their = avg(p7s.side1?.their);
                 const p7s2our = avg(p7s.side2?.our), p7s2their = avg(p7s.side2?.their);
                 const betterSide = s1pts >= s2pts ? s1name : s2name;
+                // Display-only: P5 label for this set if it was a 15-pt (deciding)
+                // set, P7 otherwise.
+                const _p7Label = d.gameType === 'deciding' ? 'P5' : 'P7';
 
                 // Server stats
                 const ss = d.serverStats || {};
@@ -7195,7 +7205,7 @@
                         <div class="profile-row"><span class="profile-label">${s2name}:</span><span><strong>${s2pts}</strong> pts (${s2pct}%)</span></div>
                         <div class="profile-row"><span class="profile-label">Better side:</span><span style="color:white;"><strong>${betterSide}</strong></span></div>
                         <div style="margin-top:8px; padding-top:8px; border-top:1px solid rgba(255,255,255,0.1);">
-                            <div style="font-size:0.8em; opacity:0.6; margin-bottom:4px; text-transform:uppercase; letter-spacing:0.05em;">P7 Avg</div>
+                            <div style="font-size:0.8em; opacity:0.6; margin-bottom:4px; text-transform:uppercase; letter-spacing:0.05em;">${_p7Label} Avg</div>
                             <div class="profile-row"><span class="profile-label">Your pair on ${s1name}:</span><span>${p7s1our}</span></div>
                             <div class="profile-row"><span class="profile-label">Opp on ${s1name}:</span><span>${p7s1their}</span></div>
                             <div class="profile-row"><span class="profile-label">Your pair on ${s2name}:</span><span>${p7s2our}</span></div>
@@ -8546,7 +8556,10 @@
             const p7Side1Their = p7s?.side1?.their?.length > 0 ? (p7s.side1.their.reduce((a,b)=>a+b,0) / p7s.side1.their.length).toFixed(1) : '—';
             const p7Side2Our   = p7s?.side2?.our?.length   > 0 ? (p7s.side2.our.reduce((a,b)=>a+b,0)   / p7s.side2.our.length).toFixed(1)   : '—';
             const p7Side2Their = p7s?.side2?.their?.length > 0 ? (p7s.side2.their.reduce((a,b)=>a+b,0) / p7s.side2.their.length).toFixed(1) : '—';
-            
+            // Display-only: P5 label for 15-pt (deciding) sets, P7 for 21-pt — same
+            // 'normal'/'deciding' distinction calculateFirstSwitchWinPct() already uses.
+            const _p7Label = displayState.gameType === 'deciding' ? 'P5' : 'P7';
+
             const yourName   = displaySetup?.yourName || userProfile?.name || 'Your team';
             const partnerName = displaySetup?.partnerName || 'Partner';
             const pairName   = `${yourName.split(' ').pop()}/${partnerName.split(' ').pop()}`;
@@ -8560,12 +8573,12 @@
                     <div class="stat-row"><span>${s1} side</span><span><strong>${displayState.side1Score}</strong> pts (${s1Pct}%)</span></div>
                     <div class="stat-row"><span>${s2} side</span><span><strong>${displayState.side2Score}</strong> pts (${s2Pct}%)</span></div>
 
-                    <div style="margin-top:12px; font-size:0.85em; font-weight:bold; opacity:0.65; text-transform:uppercase; letter-spacing:0.04em;">P7 (Points per 7)</div>
+                    <div style="margin-top:12px; font-size:0.85em; font-weight:bold; opacity:0.65; text-transform:uppercase; letter-spacing:0.04em;">${_p7Label} (Points per ${_p7Label === 'P5' ? '5' : '7'})</div>
                     <div style="font-size:0.85em; margin-top:6px;">
-                        <div class="stat-row"><span>${pairName} on ${s1}</span><span><strong>${p7Side1Our}</strong> P7</span></div>
-                        <div class="stat-row"><span>${oppPair} on ${s1}</span><span><strong>${p7Side1Their}</strong> P7</span></div>
-                        <div class="stat-row"><span>${pairName} on ${s2}</span><span><strong>${p7Side2Our}</strong> P7</span></div>
-                        <div class="stat-row"><span>${oppPair} on ${s2}</span><span><strong>${p7Side2Their}</strong> P7</span></div>
+                        <div class="stat-row"><span>${pairName} on ${s1}</span><span><strong>${p7Side1Our}</strong> ${_p7Label}</span></div>
+                        <div class="stat-row"><span>${oppPair} on ${s1}</span><span><strong>${p7Side1Their}</strong> ${_p7Label}</span></div>
+                        <div class="stat-row"><span>${pairName} on ${s2}</span><span><strong>${p7Side2Our}</strong> ${_p7Label}</span></div>
+                        <div class="stat-row"><span>${oppPair} on ${s2}</span><span><strong>${p7Side2Their}</strong> ${_p7Label}</span></div>
                     </div>
                 </div>`;
         }
@@ -8696,9 +8709,13 @@
                        </div>`
                     : '';
 
+                // Display-only: which word to show for this segment size — P5 for
+                // 15-pt (5-pt segments), P7 for 21-pt (7-pt segments). Never changes
+                // any calculation, only the label.
+                const _p7Label = currentSetType === '15' ? 'P5' : 'P7';
                 const _headingLabel = currentVenueFilter !== 'all'
-                    ? `POINTS PER 7 DATA — ${(_filteredVenueData[currentVenueFilter]?.name || '').toUpperCase()}`
-                    : 'POINTS PER 7 DATA';
+                    ? `POINTS PER ${_p7Label === 'P5' ? '5' : '7'} DATA — ${(_filteredVenueData[currentVenueFilter]?.name || '').toUpperCase()}`
+                    : `POINTS PER ${_p7Label === 'P5' ? '5' : '7'} DATA`;
                 let html = `<div class="stat-box" style="border-left-color:rgba(255,255,255,0.5);"><h3>🌍 ${_headingLabel}</h3>${_mixingWarning}`;
 
                 // Control-vs-deviation framing (see calculateGlobalP7Baseline() and
@@ -8708,11 +8725,11 @@
                 // the earlier bug where a venue-scoped "overall P7" could collapse
                 // toward zero from side-to-side cancellation. Everything venue-specific
                 // below is framed as a deviation from this.
-                const globalP7 = await calculateGlobalP7Baseline(competitive);
-                const _controlRaw = globalP7.hasData ? `Our P7 = ${globalP7.avgOur.toFixed(1)}   Opp = ${globalP7.avgTheir.toFixed(1)}` : '—';
+                const globalP7 = await calculateGlobalP7Baseline(competitive, currentSetType === '15');
+                const _controlRaw = globalP7.hasData ? `Our ${_p7Label} = ${globalP7.avgOur.toFixed(1)}   Opp = ${globalP7.avgTheir.toFixed(1)}` : '—';
                 html += `<div style="background:rgba(255,255,255,0.06);border-radius:6px;padding:12px;margin-bottom:14px;">
                     <div style="font-size:0.72em;letter-spacing:0.06em;opacity:0.55;text-transform:uppercase;margin-bottom:2px;">The Control</div>
-                    <div class="stat-row"><span>Our P7 Everywhere</span><span><strong>${_controlRaw}</strong>${p7SampleTag(globalP7.hasData ? globalP7.segments : null)}</span></div>
+                    <div class="stat-row"><span>Our ${_p7Label} Everywhere</span><span><strong>${_controlRaw}</strong>${p7SampleTag(globalP7.hasData ? globalP7.segments : null)}</span></div>
                     <div style="font-size:0.72em;opacity:0.5;margin:4px 0 8px;">Career-wide, every venue — the baseline the per-venue figures below are measured against.</div>
                 </div>`;
 
@@ -8743,12 +8760,18 @@
                                 n15++;
                             }
                         }
-                        segs.forEach(seg => {
-                            if (!sidePoints[seg.side]) sidePoints[seg.side] = { our: 0, their: 0, segments: 0 };
-                            sidePoints[seg.side].our += seg.ourPoints || 0;
-                            sidePoints[seg.side].their += seg.theirPoints || 0;
-                            sidePoints[seg.side].segments++;
-                        });
+                        // P7-by-side (sidePoints) must never mix 21-pt (7-pt segments) and
+                        // 15-pt (5-pt segments) sets — different units. Only fold this set's
+                        // segments in when its own type matches the Data tab's selected
+                        // set-type toggle.
+                        if ((d.gameType === 'deciding') === (currentSetType === '15')) {
+                            segs.forEach(seg => {
+                                if (!sidePoints[seg.side]) sidePoints[seg.side] = { our: 0, their: 0, segments: 0 };
+                                sidePoints[seg.side].our += seg.ourPoints || 0;
+                                sidePoints[seg.side].their += seg.theirPoints || 0;
+                                sidePoints[seg.side].segments++;
+                            });
+                        }
                     });
                     
                     const avgTotalPoints = n > 0 ? (totalPointsSum / n).toFixed(1) : '—';
@@ -8777,7 +8800,7 @@
                             const sp = sidePoints[side];
                             const _sideP7 = sp.segments > 0 ? sp.our / sp.segments : null;
                             const _dev = (globalP7.hasData && _sideP7 !== null) ? formatP7Deviation(_sideP7, globalP7.avgOur) : null;
-                            return `<div class="stat-row"><span>Our P7 on the ${side}, this venue</span><span><strong>${_sideP7 !== null ? `${_sideP7.toFixed(1)}${_dev !== null ? ' (' + _dev + ')' : ''}` : '—'}</strong>${p7SampleTag(sp.segments)}</span></div>`;
+                            return `<div class="stat-row"><span>Our ${_p7Label} on the ${side}, this venue</span><span><strong>${_sideP7 !== null ? `${_sideP7.toFixed(1)}${_dev !== null ? ' (' + _dev + ')' : ''}` : '—'}</strong>${p7SampleTag(sp.segments)}</span></div>`;
                         }).join('')}
                         <div style="font-size:0.72em;letter-spacing:0.06em;opacity:0.55;text-transform:uppercase;margin:10px 0 2px;">Pooled Side Strength — deviation from neutral 50%, not from us</div>
                         ${sides.map(side => {
@@ -8788,7 +8811,7 @@
                             const pooledN = sp.segments + (oppSp ? oppSp.segments : 0);
                             const pooledP7Val = pooledN > 0 ? (sp.our + (oppSp ? oppSp.their : 0)) / pooledN : null;
                             const pooledDev = pooledRatio !== null ? ((pooledRatio - 50 >= 0 ? '+' : '') + (pooledRatio - 50).toFixed(1) + 'pp') : null;
-                            return `<div class="stat-row"><span>Pooled P7, ${side}, this venue</span><span><strong>${pooledP7Val !== null ? `${pooledP7Val.toFixed(1)}${pooledDev !== null ? ' (' + pooledDev + ')' : ''}` : '—'}</strong>${p7SampleTag(pooledN)}</span></div>`;
+                            return `<div class="stat-row"><span>Pooled ${_p7Label}, ${side}, this venue</span><span><strong>${pooledP7Val !== null ? `${pooledP7Val.toFixed(1)}${pooledDev !== null ? ' (' + pooledDev + ')' : ''}` : '—'}</strong>${p7SampleTag(pooledN)}</span></div>`;
                         }).join('')}
                     </div>`;
 
@@ -8822,7 +8845,7 @@
                                 <div class="stat-row"><span>Your pair wins</span><span><strong>${ourPct}%</strong> of points</span></div>
                                 <div class="stat-row"><span>Opp pair wins</span><span><strong>${theirPct}%</strong> of points</span></div>
                                 <div style="font-size:0.82em;opacity:0.65;margin-bottom:4px;padding-top:4px;border-top:1px solid rgba(255,255,255,0.06);">Opponent on this side:</div>
-                                <div class="stat-row" style="font-size:0.85em;opacity:0.8;"><span>Opponent's P7 avg</span><span><strong>${oppOwnP7Str}</strong></span></div>
+                                <div class="stat-row" style="font-size:0.85em;opacity:0.8;"><span>Opponent's ${_p7Label} avg</span><span><strong>${oppOwnP7Str}</strong></span></div>
                             </div>`;
                     });
                     
@@ -9400,13 +9423,17 @@
                 const sides = orientation.split('-');
                 const tier = matchSetup.competitionTier || 'NCAA_Pro';
                 const swingleLevel = Math.round(matchSetup.weather?.beaufortForce ?? 0);
+                // Best isDeciding signal available before calculateCoinTossStrategies()
+                // has run (ctx.gameType doesn't exist yet) — mirrors the same
+                // isSet3||ctx.gameType==='deciding' heuristic used later as isDecidingDisp.
+                const _isDecidingForFetch = matchScore.setsCompleted.length >= 2 || matchSetup.gameType === 'deciding';
                 // Pooled side-strength ratios — confidence-graduated fallback (same
                 // venue/wind → same wind any venue with this orientation → same venue
                 // any wind → thinnest available). See calculatePooledSideRatios() /
                 // calculateCoinTossStrategies().
-                pooledSideRatios = await calculatePooledSideRatios(venueId, orientation, swingleLevel, true);
+                pooledSideRatios = await calculatePooledSideRatios(venueId, orientation, swingleLevel, true, _isDecidingForFetch);
                 if (!calculateP7Stats().hasData) {
-                    const resolved = await resolveWindConditionedP7Data(venueId, tier, swingleLevel, sides[0], sides[1]);
+                    const resolved = await resolveWindConditionedP7Data(venueId, tier, swingleLevel, sides[0], sides[1], true, _isDecidingForFetch);
                     p7Source = resolved.source;
                     preMatch = {
                         historicalP7Data: resolved.p7Data,
@@ -9712,9 +9739,13 @@
             // FROM that control (own-side figures) or from a neutral 50% (pooled
             // side-strength figures), never as a standalone number — see
             // formatP7Deviation()/p7SampleTag().
-            const globalP7 = await calculateGlobalP7Baseline(true);
+            const globalP7 = await calculateGlobalP7Baseline(true, isDecidingDisp);
             const _ownP7Side1 = p7.avgOurSide1;
             const _ownP7Side2 = p7.avgOurSide2;
+            // Display-only: which word to show for this segment size — P5 for 15-pt
+            // (5-pt segments), P7 for 21-pt (7-pt segments). Never changes any
+            // calculation, only the label.
+            const _p7Label = isDecidingDisp ? 'P5' : 'P7';
 
             // Wind on each side
             let windRowHtml = '';
@@ -9796,21 +9827,21 @@
 
                 <!-- P7 BY SIDE -->
                 <div class="stat-box" style="border-left-color:rgba(255,255,255,0.2);">
-                    <h3>📐 P7 BY SIDE — ${setsLabel}</h3>
+                    <h3>📐 ${_p7Label} BY SIDE — ${setsLabel}</h3>
                     ${p7SourceNote ? `<div style="font-size:0.78em;opacity:0.55;margin-bottom:8px;">${p7SourceNote}</div>` : ''}
                     <div style="background:rgba(255,255,255,0.06);border-radius:6px;padding:12px;margin-bottom:10px;">
                         <div style="font-size:0.72em;letter-spacing:0.06em;opacity:0.55;text-transform:uppercase;margin-bottom:2px;">The Control</div>
-                        <div class="stat-row"><span>Our P7 Everywhere</span><span><strong>${globalP7.hasData ? `Our P7 = ${globalP7.avgOur.toFixed(1)}   Opp = ${globalP7.avgTheir.toFixed(1)}` : '—'}</strong>${p7SampleTag(globalP7.hasData ? globalP7.segments : null)}</span></div>
+                        <div class="stat-row"><span>Our ${_p7Label} Everywhere</span><span><strong>${globalP7.hasData ? `Our ${_p7Label} = ${globalP7.avgOur.toFixed(1)}   Opp = ${globalP7.avgTheir.toFixed(1)}` : '—'}</strong>${p7SampleTag(globalP7.hasData ? globalP7.segments : null)}</span></div>
                         <div style="font-size:0.72em;opacity:0.5;margin:4px 0 10px;">Career-wide, every venue — the baseline everything below is measured against.</div>
 
                         <div style="font-size:0.72em;letter-spacing:0.06em;opacity:0.55;text-transform:uppercase;margin-bottom:2px;">Deviations From Our Baseline</div>
-                        <div class="stat-row"><span>Our P7 on the ${ctx.side1Name}, this venue</span><span><strong>${(_ownP7Side1 !== null && _ownP7Side1 !== undefined) ? `${_ownP7Side1.toFixed(1)}${globalP7.hasData ? ' (' + formatP7Deviation(_ownP7Side1, globalP7.avgOur) + ')' : ''}` : '—'}</strong>${p7SampleTag(n1)}</span></div>
-                        <div class="stat-row"><span>Our P7 on the ${ctx.side2Name}, this venue</span><span><strong>${(_ownP7Side2 !== null && _ownP7Side2 !== undefined) ? `${_ownP7Side2.toFixed(1)}${globalP7.hasData ? ' (' + formatP7Deviation(_ownP7Side2, globalP7.avgOur) + ')' : ''}` : '—'}</strong>${p7SampleTag(n2)}</span></div>
+                        <div class="stat-row"><span>Our ${_p7Label} on the ${ctx.side1Name}, this venue</span><span><strong>${(_ownP7Side1 !== null && _ownP7Side1 !== undefined) ? `${_ownP7Side1.toFixed(1)}${globalP7.hasData ? ' (' + formatP7Deviation(_ownP7Side1, globalP7.avgOur) + ')' : ''}` : '—'}</strong>${p7SampleTag(n1)}</span></div>
+                        <div class="stat-row"><span>Our ${_p7Label} on the ${ctx.side2Name}, this venue</span><span><strong>${(_ownP7Side2 !== null && _ownP7Side2 !== undefined) ? `${_ownP7Side2.toFixed(1)}${globalP7.hasData ? ' (' + formatP7Deviation(_ownP7Side2, globalP7.avgOur) + ')' : ''}` : '—'}</strong>${p7SampleTag(n2)}</span></div>
 
                         ${pooledSideRatios ? `
                         <div style="font-size:0.72em;letter-spacing:0.06em;opacity:0.55;text-transform:uppercase;margin:10px 0 2px;">Pooled Side Strength — deviation from neutral 50%, not from us</div>
-                        <div class="stat-row"><span>Pooled P7, ${ctx.side1Name}, this venue</span><span><strong>${(pooledSideRatios.pooledP7Side1 !== null && pooledSideRatios.pooledP7Side1 !== undefined) ? `${pooledSideRatios.pooledP7Side1.toFixed(1)}${(pooledSideRatios.side1 !== null && pooledSideRatios.side1 !== undefined) ? ' (' + (pooledSideRatios.side1 - 50 >= 0 ? '+' : '') + (pooledSideRatios.side1 - 50).toFixed(1) + 'pp)' : ''}` : '—'}</strong>${pooledSideRatios.confidence ? ` <span style="${(pooledSideRatios.confidence === 'low' || pooledSideRatios.confidence === 'verylow') ? 'font-weight:bold;' : 'opacity:0.6;'}">(${pooledSideRatios.confidence === 'verylow' ? 'very low' : pooledSideRatios.confidence} confidence, n=${pooledSideRatios.sampleSize})</span>` : ''}</span></div>
-                        <div class="stat-row"><span>Pooled P7, ${ctx.side2Name}, this venue</span><span><strong>${(pooledSideRatios.pooledP7Side2 !== null && pooledSideRatios.pooledP7Side2 !== undefined) ? `${pooledSideRatios.pooledP7Side2.toFixed(1)}${(pooledSideRatios.side2 !== null && pooledSideRatios.side2 !== undefined) ? ' (' + (pooledSideRatios.side2 - 50 >= 0 ? '+' : '') + (pooledSideRatios.side2 - 50).toFixed(1) + 'pp)' : ''}` : '—'}</strong>${pooledSideRatios.confidence ? ` <span style="${(pooledSideRatios.confidence === 'low' || pooledSideRatios.confidence === 'verylow') ? 'font-weight:bold;' : 'opacity:0.6;'}">(${pooledSideRatios.confidence === 'verylow' ? 'very low' : pooledSideRatios.confidence} confidence, n=${pooledSideRatios.sampleSize})</span>` : ''}</span></div>
+                        <div class="stat-row"><span>Pooled ${_p7Label}, ${ctx.side1Name}, this venue</span><span><strong>${(pooledSideRatios.pooledP7Side1 !== null && pooledSideRatios.pooledP7Side1 !== undefined) ? `${pooledSideRatios.pooledP7Side1.toFixed(1)}${(pooledSideRatios.side1 !== null && pooledSideRatios.side1 !== undefined) ? ' (' + (pooledSideRatios.side1 - 50 >= 0 ? '+' : '') + (pooledSideRatios.side1 - 50).toFixed(1) + 'pp)' : ''}` : '—'}</strong>${pooledSideRatios.confidence ? ` <span style="${(pooledSideRatios.confidence === 'low' || pooledSideRatios.confidence === 'verylow') ? 'font-weight:bold;' : 'opacity:0.6;'}">(${pooledSideRatios.confidence === 'verylow' ? 'very low' : pooledSideRatios.confidence} confidence, n=${pooledSideRatios.sampleSize})</span>` : ''}</span></div>
+                        <div class="stat-row"><span>Pooled ${_p7Label}, ${ctx.side2Name}, this venue</span><span><strong>${(pooledSideRatios.pooledP7Side2 !== null && pooledSideRatios.pooledP7Side2 !== undefined) ? `${pooledSideRatios.pooledP7Side2.toFixed(1)}${(pooledSideRatios.side2 !== null && pooledSideRatios.side2 !== undefined) ? ' (' + (pooledSideRatios.side2 - 50 >= 0 ? '+' : '') + (pooledSideRatios.side2 - 50).toFixed(1) + 'pp)' : ''}` : '—'}</strong>${pooledSideRatios.confidence ? ` <span style="${(pooledSideRatios.confidence === 'low' || pooledSideRatios.confidence === 'verylow') ? 'font-weight:bold;' : 'opacity:0.6;'}">(${pooledSideRatios.confidence === 'verylow' ? 'very low' : pooledSideRatios.confidence} confidence, n=${pooledSideRatios.sampleSize})</span>` : ''}</span></div>
                         ` : ''}
                     </div>
                     ${receiveAdv ? '<div style="font-size:0.8em;opacity:0.65;">Receive: ' + receiveAdv.receivePct.toFixed(1) + '% of RPs vs ' + receiveAdv.servePct.toFixed(1) + '% serving = ' + recAdvPts.toFixed(2) + ' pts edge (n=' + receiveAdv.sampleSize + ')</div>' : ''}
@@ -10982,7 +11013,7 @@
         // so "live" and "historical" aren't kept as separate tiers. processedSetIds
         // guards against double-counting a set that's both in memory and already saved
         // to Firestore.
-        async function calculateHistoricalP7StatsForVenue(venueId, competitive = true, swingleLevel = null) {
+        async function calculateHistoricalP7StatsForVenue(venueId, competitive = true, swingleLevel = null, isDeciding = null) {
             if (!venueId) return { hasData: false };
             try {
                 const side1Stats = { our: [], their: [] };
@@ -11008,6 +11039,11 @@
                         if (d.includedInStats === false) return;
                         if (isTestVenueId(d.venueId)) return;
                         if (d.venueId !== venueId) return;
+                        // 21-pt sets use 7-point segments, 15-pt sets use 5-point segments —
+                        // different units. Never average them together (isDeciding===null is
+                        // only a permissive fallback for a caller that hasn't been updated to
+                        // pass it; every current caller does).
+                        if (isDeciding !== null && (d.gameType === 'deciding') !== isDeciding) return;
                         if (!matchesSwingle(d.weatherAtSetStart)) return;
                         if (competitive && !isCompetitiveSet(d.ourScore, d.theirScore, d.gameType === 'deciding' ? 15 : 21)) return;
                         const p7 = d.p7Stats;
@@ -11026,6 +11062,7 @@
                     if (set.setId && processedSetIds.has(set.setId)) return;
                     if (isTestVenueId(set.matchSetup?.venue)) return;
                     if (set.matchSetup?.venue !== venueId) return;
+                    if (isDeciding !== null && (set.matchSetup?.gameType === 'deciding') !== isDeciding) return;
                     if (!matchesSwingle(set.matchState?.weatherAtSetStart)) return;
                     const setP7 = set.matchState?.p7Stats;
                     if (!setP7) return;
@@ -11055,7 +11092,7 @@
         // as-is, consistent with every other P7 read in this app). Same dedup pattern
         // as calculateHistoricalP7StatsForVenue() — folds in this match's own
         // completed sets not yet reflected in a Firestore read.
-        async function calculateGlobalP7Baseline(competitive = true) {
+        async function calculateGlobalP7Baseline(competitive = true, isDeciding = null) {
             if (!currentUser) return { hasData: false };
             try {
                 let ourSum = 0, theirSum = 0, segCount = 0;
@@ -11080,6 +11117,10 @@
                     if (!d.complete) return;
                     if (d.includedInStats === false) return;
                     if (isTestVenueId(d.venueId)) return;
+                    // 21-pt sets use 7-point segments, 15-pt sets use 5-point segments —
+                    // never average them together (isDeciding===null is a permissive
+                    // fallback for a caller that hasn't been updated; every current one has).
+                    if (isDeciding !== null && (d.gameType === 'deciding') !== isDeciding) return;
                     if (competitive && !isCompetitiveSet(d.ourScore, d.theirScore, d.gameType === 'deciding' ? 15 : 21)) return;
                     const p7 = d.p7Stats;
                     if (!p7?.side1 || !p7?.side2) return;
@@ -11093,6 +11134,7 @@
                 (matchScore.setsCompleted || []).forEach(set => {
                     if (set.setId && processedSetIds.has(set.setId)) return;
                     if (isTestVenueId(set.matchSetup?.venue)) return;
+                    if (isDeciding !== null && (set.matchSetup?.gameType === 'deciding') !== isDeciding) return;
                     const setP7 = set.matchState?.p7Stats;
                     if (!setP7) return;
                     accumulate(setP7.side1);
@@ -11146,7 +11188,7 @@
         // history is thin. Used only by calculatePooledSideRatios()'s MEDIUM-confidence
         // tier — side1/side2 naming stays consistent across pooled venues because the
         // same orientation string always splits into the same side1Name/side2Name order.
-        async function calculateHistoricalP7StatsByOrientation(orientation, competitive = true, swingleLevel = null) {
+        async function calculateHistoricalP7StatsByOrientation(orientation, competitive = true, swingleLevel = null, isDeciding = null) {
             if (!orientation) return { hasData: false };
             try {
                 const side1Stats = { our: [], their: [] };
@@ -11172,6 +11214,10 @@
                         if (d.includedInStats === false) return;
                         if (isTestVenueId(d.venueId)) return;
                         if (d.orientation !== orientation) return;
+                        // 21-pt sets use 7-point segments, 15-pt sets use 5-point segments —
+                        // never average them together (isDeciding===null is a permissive
+                        // fallback for a caller that hasn't been updated; every current one has).
+                        if (isDeciding !== null && (d.gameType === 'deciding') !== isDeciding) return;
                         if (!matchesSwingle(d.weatherAtSetStart)) return;
                         if (competitive && !isCompetitiveSet(d.ourScore, d.theirScore, d.gameType === 'deciding' ? 15 : 21)) return;
                         const p7 = d.p7Stats;
@@ -11188,6 +11234,7 @@
                     if (set.setId && processedSetIds.has(set.setId)) return;
                     if (isTestVenueId(set.matchSetup?.venue)) return;
                     if (set.matchSetup?.orientation !== orientation) return;
+                    if (isDeciding !== null && (set.matchSetup?.gameType === 'deciding') !== isDeciding) return;
                     if (!matchesSwingle(set.matchState?.weatherAtSetStart)) return;
                     const setP7 = set.matchState?.p7Stats;
                     if (!setP7) return;
@@ -11241,7 +11288,7 @@
         // { side1, side2, confidence, sampleSize, label } or null if there's no data
         // in any tier at all. label is a ready-to-display sentence naming the tier and
         // sample size, so callers never silently use a broader tier without saying so.
-        async function calculatePooledSideRatios(venueId, orientation, swingleLevel, competitive) {
+        async function calculatePooledSideRatios(venueId, orientation, swingleLevel, competitive, isDeciding = null) {
             if (!venueId && !orientation) return null;
 
             const segCount = p7 => (p7?.hasData ? (p7.side1Segments + p7.side2Segments) : 0);
@@ -11249,21 +11296,21 @@
             if (venueId) {
                 tiers.push({
                     confidence: 'high',
-                    p7: await calculateHistoricalP7StatsForVenue(venueId, competitive, swingleLevel),
+                    p7: await calculateHistoricalP7StatsForVenue(venueId, competitive, swingleLevel, isDeciding),
                     label: n => `Based on ${n} segments at this venue at similar wind conditions (high confidence).`
                 });
             }
             if (orientation) {
                 tiers.push({
                     confidence: 'medium',
-                    p7: await calculateHistoricalP7StatsByOrientation(orientation, competitive, swingleLevel),
+                    p7: await calculateHistoricalP7StatsByOrientation(orientation, competitive, swingleLevel, isDeciding),
                     label: n => `Based on ${n} segments at similar wind conditions across ${orientation} venues (medium confidence).`
                 });
             }
             if (venueId) {
                 tiers.push({
                     confidence: 'low',
-                    p7: await calculateHistoricalP7StatsForVenue(venueId, competitive, null),
+                    p7: await calculateHistoricalP7StatsForVenue(venueId, competitive, null, isDeciding),
                     label: n => `Based on ${n} segments at this venue, mixed wind conditions (low confidence).`
                 });
             }
