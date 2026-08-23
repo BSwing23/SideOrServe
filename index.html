@@ -8782,8 +8782,10 @@
                     html += sampleDisclaimer(n);
 
                     // Opposite-side lookup for pooled metric computation — needed by
-                    // both the control-vs-deviation lead block below and the existing
-                    // per-side detail cards further down.
+                    // the pooled side strength block below. Side data is always shown
+                    // pooled (both teams combined), never team-specific — a team-
+                    // specific figure conflates the team's own skill with the side's
+                    // actual effect, and is noisier (smaller sample) than pooled.
                     const getOppSide = s => {
                         const oppMap = { south:'North', north:'South', east:'West', west:'East',
                                          southeast:'Northwest', northwest:'Southeast', southwest:'Northeast', northeast:'Southwest' };
@@ -8791,18 +8793,12 @@
                         return oppName ? (Object.keys(sidePoints).find(k => k.toLowerCase() === oppName.toLowerCase()) || null) : null;
                     };
 
-                    // Deviations from THE CONTROL (global baseline, shown once above
-                    // the venue loop) and from neutral 50% (pooled side strength) — see
-                    // calculateGlobalP7Baseline() / formatP7Deviation() / p7SampleTag().
+                    // Deviation from neutral 50% (pooled side strength, both teams
+                    // combined) — see calculateGlobalP7Baseline() / formatP7Deviation()
+                    // / p7SampleTag(). This is the only per-side figure shown; THE
+                    // CONTROL block above is career-wide, not side-specific.
                     html += `<div style="background:rgba(255,255,255,0.06);border-radius:6px;padding:12px;margin-bottom:10px;">
-                        <div style="font-size:0.72em;letter-spacing:0.06em;opacity:0.55;text-transform:uppercase;margin-bottom:2px;">Deviations From Our Baseline</div>
-                        ${sides.map(side => {
-                            const sp = sidePoints[side];
-                            const _sideP7 = sp.segments > 0 ? sp.our / sp.segments : null;
-                            const _dev = (globalP7.hasData && _sideP7 !== null) ? formatP7Deviation(_sideP7, globalP7.avgOur) : null;
-                            return `<div class="stat-row"><span>Our ${_p7Label} on the ${side}, this venue</span><span><strong>${_sideP7 !== null ? `${_sideP7.toFixed(1)}${_dev !== null ? ' (' + _dev + ')' : ''}` : '—'}</strong>${p7SampleTag(sp.segments)}</span></div>`;
-                        }).join('')}
-                        <div style="font-size:0.72em;letter-spacing:0.06em;opacity:0.55;text-transform:uppercase;margin:10px 0 2px;">Pooled Side Strength — deviation from neutral 50%, not from us</div>
+                        <div style="font-size:0.72em;letter-spacing:0.06em;opacity:0.55;text-transform:uppercase;margin-bottom:2px;">Pooled Side Strength — deviation from neutral 50%, not from us</div>
                         ${sides.map(side => {
                             const sp = sidePoints[side];
                             const oppKey = getOppSide(side);
@@ -8815,40 +8811,6 @@
                         }).join('')}
                     </div>`;
 
-                    sides.forEach(side => {
-                        const sp = sidePoints[side];
-                        // Pooled side-advantage metric: points won BY whoever is standing ON this side (both teams combined).
-                        // When your team is on this side, they score sp.our.
-                        // When opponents are on this side (your team on opposite), opponents score oppSp.their.
-                        const oppKey = getOppSide(side);
-                        const oppSp = oppKey ? sidePoints[oppKey] : null;
-                        const pooledRatio = calculatePooledSideRatioPct(sp.our, sp.their, oppSp ? oppSp.our : 0, oppSp ? oppSp.their : 0);
-                        const pooledPct = pooledRatio !== null ? pooledRatio.toFixed(1) : null;
-                        // Team-specific breakdown (your team's record while on this side)
-                        const totalPts = sp.our + sp.their;
-                        const ourPct = totalPts > 0 ? (sp.our / totalPts * 100).toFixed(1) : '—';
-                        const theirPct = totalPts > 0 ? (sp.their / totalPts * 100).toFixed(1) : '—';
-                        const avgOur   = sp.segments > 0 ? sp.our   / sp.segments : null;
-                        const avgTheir = sp.segments > 0 ? sp.their / sp.segments : null;
-                        const p7net    = avgOur !== null ? avgOur - avgTheir : null;
-                        const avgOurStr   = avgOur   !== null ? avgOur.toFixed(1)   : '—';
-                        const avgTheirStr = avgTheir !== null ? avgTheir.toFixed(1) : '—';
-                        const p7netStr    = p7net    !== null ? (p7net >= 0 ? '+' : '') + p7net.toFixed(1) : '—';
-                        // Opponent's OWN P7 while THEY stood on this side — from the opposite
-                        // side's bucket (when we're on oppSide, they're on this side).
-                        const oppOwnP7 = (oppSp && oppSp.segments > 0) ? (oppSp.their / oppSp.segments) : null;
-                        const oppOwnP7Str = oppOwnP7 !== null ? oppOwnP7.toFixed(1) : '—';
-                        html += `
-                            <div style="background:rgba(255,255,255,0.05);border-radius:6px;padding:10px;margin-bottom:6px;">
-                                <div style="font-weight:bold;margin-bottom:6px;">${side} Side</div>
-                                <div style="font-size:0.82em;opacity:0.65;margin-bottom:4px;">Your team on this side:</div>
-                                <div class="stat-row"><span>Your pair wins</span><span><strong>${ourPct}%</strong> of points</span></div>
-                                <div class="stat-row"><span>Opp pair wins</span><span><strong>${theirPct}%</strong> of points</span></div>
-                                <div style="font-size:0.82em;opacity:0.65;margin-bottom:4px;padding-top:4px;border-top:1px solid rgba(255,255,255,0.06);">Opponent on this side:</div>
-                                <div class="stat-row" style="font-size:0.85em;opacity:0.8;"><span>Opponent's ${_p7Label} avg</span><span><strong>${oppOwnP7Str}</strong></span></div>
-                            </div>`;
-                    });
-                    
                     // Switch math spelled out — separate averages for each set type
                     if (n > 0) {
                         const avgPts21 = n21 > 0 ? totalPointsSum21 / n21 : null;
