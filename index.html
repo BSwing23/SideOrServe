@@ -4740,37 +4740,34 @@
                     }
                 });
                 
-                // Add historical Firestore data from other matches
-                let matchDocs = [];
-                const refsSnap = await db.collection('players').doc(currentUser.uid)
-                    .collection('matches').orderBy('timestamp','desc').limit(30).get();
-                
-                if (!refsSnap.empty) {
-                    for (const ref of refsSnap.docs) {
-                        if (ref.data().hiddenByOwner) continue;
-                        if (ref.data().matchId === currentMatchId) continue; // already counted above
-                        const matchDoc = await db.collection('matches').doc(ref.data().matchId).get();
-                        if (matchDoc.exists) matchDocs.push(matchDoc.data());
-                    }
-                }
-                
-                if (matchDocs.length === 0 && stats.you.serves === 0) {
-                    const directSnap = await db.collection('matches')
-                        .where('userId', '==', currentUser.uid).limit(30).get();
-                    directSnap.docs.forEach(d => {
-                        if (d.id !== currentMatchId) matchDocs.push(d.data());
+                // Add historical data from every OTHER match's own set documents.
+                // Server stats live ONLY on `sets` documents — saveMatchHeader() never
+                // writes a serverStats field onto `matches` headers (they're lightweight
+                // headers only, per this app's architecture) — so querying `matches`
+                // docs here (the old approach) always read undefined and silently
+                // contributed zero, regardless of how much real history existed. This
+                // is why "All Time" on the Set 2 setup page only ever showed the
+                // current match's own Set 1 data. Query `sets` directly instead, with
+                // the same filters used everywhere else (complete, includedInStats,
+                // test-venue exclusion, tier match), skipping this match's own sets
+                // since they're already counted above from memory.
+                const _psTier = matchSetup.competitionTier;
+                const setsSnap = await db.collection('sets')
+                    .where('userId', '==', currentUser.uid)
+                    .limit(500).get();
+                setsSnap.docs.forEach(doc => {
+                    const d = doc.data();
+                    if (d.matchId === currentMatchId) return; // already counted above
+                    if (!d.complete || !d.serverStats) return;
+                    if (d.includedInStats === false) return;
+                    if (isTestVenueId(d.venueId)) return;
+                    if (_psTier && d.competitionTier !== _psTier) return;
+                    ['you','partner','opp1','opp2'].forEach(k => {
+                        if (d.serverStats[k]) {
+                            stats[k].ps += d.serverStats[k].ps || 0;
+                            stats[k].serves += d.serverStats[k].totalServes || 0;
+                        }
                     });
-                }
-                
-                matchDocs.forEach(d => {
-                    if (d.serverStats) {
-                        ['you','partner','opp1','opp2'].forEach(k => {
-                            if (d.serverStats[k]) {
-                                stats[k].ps += d.serverStats[k].ps || 0;
-                                stats[k].serves += d.serverStats[k].totalServes || 0;
-                            }
-                        });
-                    }
                 });
                 
                 const ratio = (k) => stats[k].serves > 0 ? stats[k].ps / stats[k].serves : 0;
