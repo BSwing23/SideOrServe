@@ -1488,7 +1488,7 @@
                 coach: ''
             },
             'gulf-place': {
-                name: 'Gulf Place',
+                name: 'Gulf Shores',
                 location: { lat: 30.246833, lon: -87.690915 },
                 orientation: 'East-West',
                 program: '',
@@ -8800,13 +8800,29 @@
                             const sp = sidePoints[side];
                             const oppKey = getOppSide(side);
                             const oppSp = oppKey ? sidePoints[oppKey] : null;
-                            const pooledRatio = calculatePooledSideRatioPct(sp.our, sp.their, oppSp ? oppSp.our : 0, oppSp ? oppSp.their : 0);
                             const pooledN = sp.segments + (oppSp ? oppSp.segments : 0);
                             const pooledP7Val = pooledN > 0 ? (sp.our + (oppSp ? oppSp.their : 0)) / pooledN : null;
-                            const pooledDev = pooledRatio !== null ? ((pooledRatio - 50 >= 0 ? '+' : '') + (pooledRatio - 50).toFixed(1) + 'pp') : null;
-                            return `<div class="stat-row"><span>Pooled ${_p7Label}, ${side}, this venue</span><span><strong>${pooledP7Val !== null ? `${pooledP7Val.toFixed(1)}${pooledDev !== null ? ' (' + pooledDev + ')' : ''}` : '—'}</strong>${p7SampleTag(pooledN)}</span></div>`;
+                            return `<div class="stat-row"><span>Pooled ${_p7Label}, ${side}, this venue</span><span><strong>${pooledP7Val !== null ? pooledP7Val.toFixed(1) : '—'}</strong>${p7SampleTag(pooledN)}</span></div>`;
                         }).join('')}
                     </div>`;
+
+                    // TEMP DIAGNOSTIC: switch-math investigation — logs exactly what each
+                    // set at this venue contributed to n21/n15/totalPointsSum21/
+                    // totalPointsSum15, so an identical-looking 21pt/15pt switch line can
+                    // be checked against real underlying data instead of guessed at. Safe
+                    // to remove once the investigation is resolved.
+                    console.log('[SWITCH-MATH-DEBUG]', vd.name, {
+                        n21, n15, totalPointsSum21, totalPointsSum15,
+                        avgPts21: n21 > 0 ? (totalPointsSum21 / n21).toFixed(2) : null,
+                        avgPts15: n15 > 0 ? (totalPointsSum15 / n15).toFixed(2) : null,
+                        sets: sets.map(d => ({
+                            gameType: d.gameType,
+                            ourScore: d.ourScore,
+                            theirScore: d.theirScore,
+                            totalPointsPlayed: d.totalPointsPlayed,
+                            virtual15: d.virtual15 ? { totalPoints: d.virtual15.totalPoints, actualScore: d.virtual15.actualScore } : null
+                        }))
+                    });
 
                     // Switch math spelled out — separate averages for each set type
                     if (n > 0) {
