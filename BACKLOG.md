@@ -43,6 +43,19 @@ Note this is intentionally broader than the `sets` rule — any authenticated su
 
 ---
 
+### roster Firestore Rule Not Published
+Stage 1 of the admin-only Team Roster feature (University of Arizona Beach Volleyball) reads and writes a new `roster` collection. Without this rule, every read/write from the Roster screen fails with permission-denied:
+```
+match /roster/{playerId} {
+  allow read: if request.auth != null;
+  allow write: if request.auth != null && request.auth.token.email == 'brian.scott.swingle@gmail.com';
+}
+```
+The UI itself is also gated client-side by `isAdmin()` (same pattern as `adminOverrideBlocks` on Match Setup), but that's not a security boundary on its own — this rule is what actually stops a non-admin account from writing to `roster` directly. `request.auth.token.email` mirrors the `ADMIN_EMAIL` constant in `index.html`; update both together if the admin account ever changes.
+**Status:** Rule written, needs to be added to Firebase console (Brian to do — not something Claude can apply directly).
+
+---
+
 ### Partner Data Sharing — Firestore Rules Needed
 Paired-partner match sharing (`saveSetToFirestore()` mirroring a full set doc under the partner's own `userId`, `updateRPStats()` mirroring the same team-level increments onto the partner's own `rpStats`) needs two rule changes published, or every mirrored write fails with `permission-denied` and only the scorekeeper's own account sees the match:
 

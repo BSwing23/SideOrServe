@@ -675,6 +675,10 @@
         <div id="returnToMatchBtn" style="display:none;">
             <button class="btn btn-primary menu-btn" style="background: rgba(152,30,50,0.9); border: 2px solid white;" onclick="returnToLiveMatch()">▶ Return to Live Match</button>
         </div>
+        <!-- Admin-only: Team Roster — hidden for all other accounts -->
+        <div id="rosterHomeBtn" style="display:none;">
+            <button class="btn btn-secondary menu-btn" onclick="showRosterScreen()">📋 Team Roster</button>
+        </div>
         <button class="btn btn-secondary menu-btn" onclick="logout()">Log Out</button>
     </div>
 
@@ -1275,6 +1279,37 @@
         <button class="btn btn-secondary" onclick="logout()" style="margin-top:20px; width:100%;">Log Out</button>
     </div>
 
+    <!-- Team Roster Screen (Admin Only) -->
+    <div id="rosterScreen" class="container hidden">
+        <h1><img src="logo.png" style="width: 32px; height: 32px; vertical-align: middle; margin-right: 8px;">Team Roster</h1>
+
+        <!-- Season Filter -->
+        <div style="display: flex; gap: 5px; margin-bottom: 16px; justify-content: center;">
+            <button id="rosterSeason2026Btn" onclick="setRosterSeasonFilter('2026')"
+                style="flex:1; max-width:120px; padding:6px 0; border-radius:6px; border:1px solid rgba(255,255,255,0.15); cursor:pointer; font-size:0.9em; font-weight:bold; background:rgba(255,255,255,0.06); color:rgba(255,255,255,0.5);">
+                2026
+            </button>
+            <button id="rosterSeason2027Btn" onclick="setRosterSeasonFilter('2027')"
+                style="flex:1; max-width:120px; padding:6px 0; border-radius:6px; border:1px solid rgba(255,255,255,0.15); cursor:pointer; font-size:0.9em; font-weight:bold; background:rgba(255,255,255,0.06); color:rgba(255,255,255,0.5);">
+                2027
+            </button>
+            <button id="rosterSeasonAllBtn" onclick="setRosterSeasonFilter('all')"
+                style="flex:1; max-width:120px; padding:6px 0; border-radius:6px; border:1px solid rgba(255,255,255,0.3); cursor:pointer; font-size:0.9em; font-weight:bold; background:rgba(255,255,255,0.18); color:white;">
+                All
+            </button>
+        </div>
+
+        <button class="btn btn-secondary btn-small" onclick="showAddPlayerDialog()" style="width:100%; margin-bottom:16px;">
+            + Add Player
+        </button>
+
+        <div id="rosterListContent">
+            <p style="text-align:center; opacity:0.7; padding:20px 0;">Loading roster...</p>
+        </div>
+
+        <button class="btn btn-secondary" onclick="showHomeScreen()" style="margin-top:16px;">Back to Home</button>
+    </div>
+
 
 
     <script>
@@ -1862,6 +1897,7 @@
             document.getElementById('quickCoinTossScreen').classList.add('hidden');
             document.getElementById('quickStatsScreen').classList.add('hidden');
             document.getElementById('commandCenterScreen').classList.add('hidden');
+            document.getElementById('rosterScreen').classList.add('hidden');
         }
 
         function showAuthScreen() {
@@ -1885,7 +1921,13 @@
             // Show "Return to Live Match" button if a match is in progress
             const matchInProgress = matchState && matchState.servers && (matchState.ourScore > 0 || matchState.theirScore > 0 || matchScore.setsCompleted.length > 0);
             document.getElementById('returnToMatchBtn').style.display = matchInProgress ? 'block' : 'none';
-            
+
+            // Show admin-only Roster button only for the primary account
+            const _rosterBtn = document.getElementById('rosterHomeBtn');
+            if (_rosterBtn) _rosterBtn.style.display = isAdmin() ? 'block' : 'none';
+            // Fire-and-forget, one-time-per-admin-account — never blocks login/screen show.
+            seedInitialRosterIfNeeded();
+
             // Load partners
             loadPartners();
         }
@@ -6861,6 +6903,236 @@
                 console.log(`[MIGRATION] Retroactively excluded ${fixedSetsCount} set(s) across ${matchIds.length} previously-deleted match(es) from stats.`);
             } catch (error) {
                 console.error('[MIGRATION] hiddenMatchSets fix error:', error);
+            }
+        }
+
+        // ============================================================
+        // ROSTER MANAGEMENT (Admin Only — University of Arizona Beach Volleyball)
+        // Stage 1: flat `roster` collection, gated entirely client-side by
+        // isAdmin() (matches the adminOverrideBlocks pattern used on Match
+        // Setup). `position` here is reference-only metadata from the official
+        // roster — it must never constrain or auto-fill the blocker/defender
+        // role chosen at match setup time, which stays exactly as it already
+        // works elsewhere in this app.
+        // ============================================================
+        let currentRosterSeasonFilter = 'all'; // '2026', '2027', or 'all'
+        let rosterEditingId = null; // null = adding a new player; else editing this doc id
+
+        function showRosterScreen() {
+            hideAllScreens();
+            document.getElementById('rosterScreen').classList.remove('hidden');
+            loadRosterList();
+        }
+
+        function setRosterSeasonFilter(season) {
+            currentRosterSeasonFilter = season;
+            const activeId = season === 'all' ? 'rosterSeasonAllBtn' : `rosterSeason${season}Btn`;
+            ['rosterSeason2026Btn', 'rosterSeason2027Btn', 'rosterSeasonAllBtn'].forEach(id => {
+                const el = document.getElementById(id);
+                if (!el) return;
+                const active = (id === activeId);
+                el.style.background = active ? 'rgba(255,255,255,0.18)' : 'rgba(255,255,255,0.06)';
+                el.style.color = active ? 'white' : 'rgba(255,255,255,0.5)';
+                el.style.borderColor = active ? 'rgba(255,255,255,0.3)' : 'rgba(255,255,255,0.15)';
+            });
+            loadRosterList();
+        }
+
+        function rosterSlug(name) {
+            return name.toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
+        }
+
+        async function loadRosterList() {
+            const container = document.getElementById('rosterListContent');
+            if (!container) return;
+            container.innerHTML = '<p style="text-align:center; opacity:0.7; padding:20px 0;">Loading roster...</p>';
+            try {
+                const snap = await db.collection('roster').get();
+                let players = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+                if (currentRosterSeasonFilter !== 'all') {
+                    players = players.filter(p => Array.isArray(p.seasons) && p.seasons.includes(currentRosterSeasonFilter));
+                }
+                players.sort((a, b) => (parseInt(a.jerseyNumber) || 0) - (parseInt(b.jerseyNumber) || 0));
+                displayRosterList(players);
+            } catch (error) {
+                console.error('[ROSTER] Error loading roster:', error);
+                container.innerHTML = '<p style="text-align:center; opacity:0.7; padding:20px 0;">Error loading roster.</p>';
+            }
+        }
+
+        function displayRosterList(players) {
+            const container = document.getElementById('rosterListContent');
+            if (players.length === 0) {
+                container.innerHTML = '<p style="text-align:center; opacity:0.7; padding:20px 0; font-size:0.9em;">No players found for this filter.</p>';
+                return;
+            }
+            let html = '';
+            players.forEach(p => {
+                const seasons = Array.isArray(p.seasons) ? p.seasons.join(', ') : '';
+                const inactiveBadge = p.active === false
+                    ? '<span style="background:rgba(0,0,0,0.3); border:1px solid rgba(255,255,255,0.3); padding:3px 8px; border-radius:5px; font-size:0.75em;">Inactive</span>'
+                    : '';
+                html += `
+                    <div style="background: rgba(255,255,255,0.1); padding: 12px; border-radius: 8px; margin-bottom: 8px; cursor:pointer;" onclick="showAddPlayerDialog('${p.id}')">
+                        <div style="display: flex; justify-content: space-between; align-items: center;">
+                            <div style="flex: 1;">
+                                <div style="font-weight: bold; margin-bottom: 4px;">
+                                    #${p.jerseyNumber ?? '—'} ${p.name || ''}
+                                </div>
+                                <div style="font-size: 0.85em; opacity: 0.8;">
+                                    ${p.position || ''}${seasons ? ` • ${seasons}` : ''}
+                                </div>
+                            </div>
+                            <div>${inactiveBadge}</div>
+                        </div>
+                    </div>
+                `;
+            });
+            container.innerHTML = html;
+        }
+
+        function showAddPlayerDialog(playerId) {
+            rosterEditingId = playerId || null;
+            document.getElementById('rosterDialogError').classList.add('hidden');
+            document.getElementById('rosterDeleteRow').style.display = playerId ? 'block' : 'none';
+
+            if (playerId) {
+                document.getElementById('rosterDialogTitle').textContent = 'Edit Player';
+                db.collection('roster').doc(playerId).get().then(doc => {
+                    const d = doc.data() || {};
+                    document.getElementById('rosterPlayerName').value = d.name || '';
+                    document.getElementById('rosterPlayerJersey').value = d.jerseyNumber ?? '';
+                    document.getElementById('rosterPlayerPosition').value = d.position || 'Blocker';
+                    document.getElementById('rosterSeason2026Check').checked = Array.isArray(d.seasons) && d.seasons.includes('2026');
+                    document.getElementById('rosterSeason2027Check').checked = Array.isArray(d.seasons) && d.seasons.includes('2027');
+                    document.getElementById('rosterPlayerActive').checked = d.active !== false;
+                }).catch(error => console.error('[ROSTER] Error loading player for edit:', error));
+            } else {
+                document.getElementById('rosterDialogTitle').textContent = 'Add Player';
+                document.getElementById('rosterPlayerName').value = '';
+                document.getElementById('rosterPlayerJersey').value = '';
+                document.getElementById('rosterPlayerPosition').value = 'Blocker';
+                document.getElementById('rosterSeason2026Check').checked = false;
+                document.getElementById('rosterSeason2027Check').checked = false;
+                document.getElementById('rosterPlayerActive').checked = true;
+            }
+
+            document.getElementById('rosterPlayerDialog').style.display = 'flex';
+        }
+
+        function closeRosterPlayerDialog() {
+            document.getElementById('rosterPlayerDialog').style.display = 'none';
+            rosterEditingId = null;
+        }
+
+        async function saveRosterPlayer() {
+            const errEl = document.getElementById('rosterDialogError');
+            errEl.classList.add('hidden');
+
+            const name = document.getElementById('rosterPlayerName').value.trim();
+            const jerseyNumber = document.getElementById('rosterPlayerJersey').value.trim();
+            const position = document.getElementById('rosterPlayerPosition').value;
+            const seasons = [];
+            if (document.getElementById('rosterSeason2026Check').checked) seasons.push('2026');
+            if (document.getElementById('rosterSeason2027Check').checked) seasons.push('2027');
+            const active = document.getElementById('rosterPlayerActive').checked;
+
+            if (!name) {
+                errEl.textContent = 'Name is required.';
+                errEl.classList.remove('hidden');
+                return;
+            }
+            if (seasons.length === 0) {
+                errEl.textContent = 'Select at least one season.';
+                errEl.classList.remove('hidden');
+                return;
+            }
+
+            const data = { name, jerseyNumber, position, seasons, active };
+
+            try {
+                if (rosterEditingId) {
+                    await db.collection('roster').doc(rosterEditingId).update(data);
+                } else {
+                    await db.collection('roster').doc(rosterSlug(name)).set(data, { merge: true });
+                }
+                closeRosterPlayerDialog();
+                loadRosterList();
+            } catch (error) {
+                console.error('[ROSTER] Error saving player:', error);
+                errEl.textContent = 'Error saving player. Please try again.';
+                errEl.classList.remove('hidden');
+            }
+        }
+
+        async function deleteRosterPlayer() {
+            if (!rosterEditingId) return;
+            if (!confirm('Remove this player from the roster?')) return;
+            try {
+                await db.collection('roster').doc(rosterEditingId).delete();
+                closeRosterPlayerDialog();
+                loadRosterList();
+            } catch (error) {
+                console.error('[ROSTER] Error deleting player:', error);
+                alert('Error removing player. Please try again.');
+            }
+        }
+
+        // One-time seed of the 2026/2027 Arizona roster — guarded by a flag on
+        // the admin's own player doc, matching the migrateHiddenMatchSets()
+        // pattern, so it only ever runs once per admin account. Deterministic
+        // doc IDs (name slug) plus { merge: true } make re-running it harmless
+        // (no duplicates), but the flag is what actually stops it from
+        // re-running and stomping edits made after the initial seed.
+        async function seedInitialRosterIfNeeded() {
+            if (!isAdmin() || !userProfile || userProfile.rosterSeeded) return;
+            const seed = [
+                // Returning both seasons (2026 & 2027)
+                { name: 'Leah Norris', jerseyNumber: '1', position: 'Blocker', seasons: ['2026', '2027'], active: true },
+                { name: 'Kylie Helm', jerseyNumber: '2', position: 'Defender', seasons: ['2026', '2027'], active: true },
+                { name: 'Ashlyn Zilliken', jerseyNumber: '3', position: 'Blocker', seasons: ['2026', '2027'], active: true },
+                { name: 'Regan Holmer', jerseyNumber: '11', position: 'Defender', seasons: ['2026', '2027'], active: true },
+                { name: 'Madeline Walker', jerseyNumber: '12', position: 'Defender', seasons: ['2026', '2027'], active: true },
+                { name: 'Sophia Winter', jerseyNumber: '20', position: 'Blocker', seasons: ['2026', '2027'], active: true },
+                { name: 'Sadie Moore', jerseyNumber: '22', position: 'Split Blocker', seasons: ['2026', '2027'], active: true },
+                { name: 'Carlie Cisneros', jerseyNumber: '23', position: 'Blocker', seasons: ['2026', '2027'], active: true },
+                { name: 'Brooke Boyko', jerseyNumber: '25', position: 'Defender', seasons: ['2026', '2027'], active: true },
+                { name: 'Kate Phillips', jerseyNumber: '30', position: 'Blocker', seasons: ['2026', '2027'], active: true },
+                { name: 'Holly Matchinsky', jerseyNumber: '32', position: 'Blocker', seasons: ['2026', '2027'], active: true },
+                { name: 'Taylor Dobbs', jerseyNumber: '33', position: 'Defender', seasons: ['2026', '2027'], active: true },
+                { name: 'Katie Lambeth', jerseyNumber: '44', position: 'Split Blocker', seasons: ['2026', '2027'], active: true },
+                // Current (2027) jersey number stored — their 2026 number was different
+                { name: 'Ella Neubauer', jerseyNumber: '4', position: 'Blocker', seasons: ['2026', '2027'], active: true },
+                { name: 'Tylee Shires', jerseyNumber: '5', position: 'Split Blocker', seasons: ['2026', '2027'], active: true },
+                // 2026 only — departed after the 2026 season
+                { name: "Meghan O'Meara", jerseyNumber: '4', position: 'Blocker', seasons: ['2026'], active: false },
+                { name: 'Stephanie Rondon', jerseyNumber: '5', position: 'Blocker', seasons: ['2026'], active: false },
+                { name: 'Kylie Bartel', jerseyNumber: '10', position: 'Blocker', seasons: ['2026'], active: false },
+                { name: 'Adriana Nieves Papaleo', jerseyNumber: '15', position: 'Defender', seasons: ['2026'], active: false },
+                { name: 'Reece Winkcompleck', jerseyNumber: '14', position: 'Blocker', seasons: ['2026'], active: false },
+                { name: 'Elin Kaiser', jerseyNumber: '31', position: 'Defender', seasons: ['2026'], active: false },
+                // Played in 2026; transitioned to Assistant Coach for 2027 — kept here as
+                // a historical player record only. Coaching access is separate from this
+                // roster collection and is not modeled by this Stage 1 feature.
+                { name: 'Jamie Streit', jerseyNumber: '21', position: 'Defender', seasons: ['2026'], active: false },
+                // 2027 only — new for 2027
+                { name: 'Kennedi Diamond', jerseyNumber: '10', position: 'Defender', seasons: ['2027'], active: true },
+                { name: 'Reece McArthur', jerseyNumber: '14', position: 'Blocker', seasons: ['2027'], active: true },
+                { name: 'Tatum Riggs', jerseyNumber: '15', position: 'Defender', seasons: ['2027'], active: true },
+                { name: 'Violet McArthur', jerseyNumber: '21', position: 'Split Blocker', seasons: ['2027'], active: true }
+            ];
+            try {
+                const batch = db.batch();
+                seed.forEach(p => {
+                    const ref = db.collection('roster').doc(rosterSlug(p.name));
+                    batch.set(ref, p, { merge: true });
+                });
+                await batch.commit();
+                await db.collection('players').doc(currentUser.uid).update({ rosterSeeded: true });
+                userProfile.rosterSeeded = true;
+                console.log('[ROSTER] Seeded initial roster:', seed.length, 'players');
+            } catch (error) {
+                console.error('[ROSTER] Error seeding initial roster:', error);
             }
         }
 
@@ -12238,6 +12510,63 @@
             <div style="display: flex; gap: 10px; margin-top: 20px;">
                 <button class="btn btn-secondary" onclick="closeAddPartnerDialog()" style="flex: 1;">Cancel</button>
                 <button class="btn btn-primary" onclick="searchForPartner()" style="flex: 1;">Search</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Add/Edit Roster Player Dialog (Admin Only) -->
+    <div id="rosterPlayerDialog" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.8); justify-content: center; align-items: center; z-index: 2000;">
+        <div style="background: #981E32; padding: 30px; border-radius: 20px; max-width: 500px; width: 90%; max-height: 80vh; overflow-y: auto; box-shadow: 0 8px 32px rgba(0,0,0,0.5);">
+            <h2 id="rosterDialogTitle" style="margin-top: 0;">Add Player</h2>
+
+            <div class="form-group">
+                <label>Name:</label>
+                <input type="text" id="rosterPlayerName" placeholder="Full name" style="width: 100%;">
+            </div>
+
+            <div class="form-group">
+                <label>Jersey Number:</label>
+                <input type="text" id="rosterPlayerJersey" placeholder="e.g. 12" style="width: 100%;">
+            </div>
+
+            <div class="form-group">
+                <label>Position:</label>
+                <select id="rosterPlayerPosition" style="width: 100%; padding:12px; border-radius:10px; border:none; font-size:1em; background:rgba(255,255,255,0.9); color:#333;">
+                    <option value="Blocker">Blocker</option>
+                    <option value="Defender">Defender</option>
+                    <option value="Split Blocker">Split Blocker</option>
+                </select>
+            </div>
+
+            <div class="form-group">
+                <label>Season(s):</label>
+                <div style="display:flex; gap:16px; margin-top:6px;">
+                    <label style="display:flex; align-items:center; gap:6px; cursor:pointer; font-weight:normal;">
+                        <input type="checkbox" id="rosterSeason2026Check" style="width:18px; height:18px; cursor:pointer;"> 2026
+                    </label>
+                    <label style="display:flex; align-items:center; gap:6px; cursor:pointer; font-weight:normal;">
+                        <input type="checkbox" id="rosterSeason2027Check" style="width:18px; height:18px; cursor:pointer;"> 2027
+                    </label>
+                </div>
+            </div>
+
+            <div class="form-group">
+                <label style="display:flex; align-items:center; gap:8px; cursor:pointer; font-weight:normal;">
+                    <input type="checkbox" id="rosterPlayerActive" checked style="width:18px; height:18px; cursor:pointer;"> Active
+                </label>
+            </div>
+
+            <div id="rosterDialogError" class="error hidden" style="margin-bottom:10px;"></div>
+
+            <div style="display: flex; gap: 10px; margin-top: 20px;">
+                <button class="btn btn-secondary" onclick="closeRosterPlayerDialog()" style="flex: 1;">Cancel</button>
+                <button class="btn btn-primary" onclick="saveRosterPlayer()" style="flex: 1;">Save</button>
+            </div>
+
+            <div id="rosterDeleteRow" style="display:none; margin-top: 14px; text-align:center;">
+                <button class="btn btn-secondary btn-small" onclick="deleteRosterPlayer()" style="background: rgba(0,0,0,0.2); border: 1px solid white; color: white;">
+                    🗑️ Remove Player
+                </button>
             </div>
         </div>
     </div>
