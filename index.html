@@ -1636,6 +1636,16 @@
                 program: '',
                 coach: ''
             },
+            'manhattan-beach-ca': {
+                name: 'Manhattan Beach, CA',
+                location: { lat: 33.88374, lon: -118.41361 },
+                // Exact court location varies by event along a ~3km stretch of beach,
+                // so GPS auto-detect uses a wide radius (meters) centered on the pier.
+                gpsRadius: 2500,
+                orientation: 'North-South',
+                program: '',
+                coach: ''
+            },
             'mapes-beach': {
                 name: 'Mapes Beach (Sunset Canyon)',
                 location: { lat: 34.0751, lon: -118.4515 },
@@ -2498,6 +2508,9 @@
                     // Check built-in venues
                     Object.keys(venues).forEach(key => {
                         const venue = venues[key];
+                        // TEST BEACH shares Manhattan Beach's coordinates — never auto-detect it,
+                        // or a real match there would be logged to the no-stats test venue.
+                        if (venue.isTestVenue) return;
                         const distance = calculateDistance(userLat, userLon, venue.location.lat, venue.location.lon);
                         if (distance < closestDistance) {
                             closestDistance = distance;
@@ -2518,8 +2531,9 @@
                     
                     console.log('[GPS] Closest venue:', closestVenue.name, 'Distance:', closestDistance.toFixed(0), 'm');
                     
-                    // If within 250m, auto-select
-                    if (closestDistance < 500) {
+                    // Auto-select within the venue's own radius (default 500m; wide-open
+                    // beaches like Manhattan Beach set a larger gpsRadius).
+                    if (closestDistance < (closestVenue.gpsRadius || 500)) {
                         alert(`You appear to be at ${closestVenue.name}!`);
                         
                         // Auto-select in dropdowns
