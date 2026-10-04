@@ -1294,7 +1294,7 @@
             <button class="btn btn-secondary" onclick="paywallRecheckAccess()">I've already subscribed — check again</button>
         </div>
         <div style="text-align:center; font-size:0.85em; opacity:0.7; margin:16px 0;">
-            Players and coaches with a verified @arizona.edu or @lmu.edu email get free access.
+            Players and coaches with a verified @arizona.edu, @lmu.edu or @stanford.edu email get free access.
         </div>
         <button class="btn btn-secondary" onclick="logout()">Log Out</button>
     </div>
@@ -1358,7 +1358,7 @@
         // OFF and the app behaves exactly as before — safe to deploy before the
         // Lemon Squeezy product + webhook are live. Free access: admin, verified
         // emails on FREE_ACCESS_DOMAINS, or a subscribers/{uid} doc with comp:true.
-        const FREE_ACCESS_DOMAINS = ['arizona.edu', 'lmu.edu'];
+        const FREE_ACCESS_DOMAINS = ['arizona.edu', 'lmu.edu', 'stanford.edu'];
         const LS_CHECKOUT_URL = '';
         const SUBSCRIPTION_GATE_ON = !!LS_CHECKOUT_URL;
         function hasFreeAccess() {
