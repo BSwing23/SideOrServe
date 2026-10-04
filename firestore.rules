@@ -49,5 +49,19 @@ service cloud.firestore {
                     && request.auth.uid == resource.data.userId;
     }
 
+    // ── Subscription status (Lemon Squeezy) ──────────────────────────────────
+    // The user may READ their own doc; only the webhook (Admin SDK, bypasses
+    // rules) writes it, so nobody can self-grant access.
+    match /subscribers/{uid} {
+      allow read: if request.auth != null && request.auth.uid == uid;
+      allow write: if false;
+    }
+
+    // ── Admin-only team roster ───────────────────────────────────────────────
+    match /roster/{playerId} {
+      allow read: if request.auth != null;
+      allow write: if request.auth != null && request.auth.token.email == 'brian.scott.swingle@gmail.com';
+    }
+
   }
 }

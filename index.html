@@ -1279,6 +1279,26 @@
         <button class="btn btn-secondary" onclick="logout()" style="margin-top:20px; width:100%;">Log Out</button>
     </div>
 
+    <!-- Paywall Screen (shown only when the subscription gate is on and the account has no access) -->
+    <div id="paywallScreen" class="container hidden">
+        <img src="logo.png" alt="Side or Serve" style="width: 180px; margin-bottom: 10px; display:block; margin-left:auto; margin-right:auto;">
+        <h2 id="paywallTitle" style="text-align:center;">Subscribe to Side or Serve</h2>
+        <p id="paywallBody" style="text-align:center; opacity:0.85; margin-bottom:20px;"></p>
+        <div id="paywallMessage" class="info-box hidden" style="text-align:center; margin-bottom:16px;"></div>
+        <div id="paywallVerifyRow" class="hidden">
+            <button class="btn btn-primary" onclick="paywallRecheckVerified()">I've verified my email</button>
+            <button class="btn btn-secondary" onclick="paywallResendVerification()">Resend verification email</button>
+        </div>
+        <div id="paywallSubscribeRow">
+            <button class="btn btn-primary" onclick="startCheckout()">Subscribe</button>
+            <button class="btn btn-secondary" onclick="paywallRecheckAccess()">I've already subscribed — check again</button>
+        </div>
+        <div style="text-align:center; font-size:0.85em; opacity:0.7; margin:16px 0;">
+            Players and coaches with a verified @arizona.edu or @lmu.edu email get free access.
+        </div>
+        <button class="btn btn-secondary" onclick="logout()">Log Out</button>
+    </div>
+
     <!-- Team Roster Screen (Admin Only) -->
     <div id="rosterScreen" class="container hidden">
         <h1><img src="logo.png" style="width: 32px; height: 32px; vertical-align: middle; margin-right: 8px;">Team Roster</h1>
@@ -1333,6 +1353,23 @@
         // Admin gate — manual overrides for the primary account only
         const ADMIN_EMAIL = 'brian.scott.swingle@gmail.com';
         function isAdmin() { return !!(currentUser && currentUser.email?.toLowerCase() === ADMIN_EMAIL.toLowerCase()); }
+
+        // Subscription gate (Lemon Squeezy). With LS_CHECKOUT_URL empty the gate is
+        // OFF and the app behaves exactly as before — safe to deploy before the
+        // Lemon Squeezy product + webhook are live. Free access: admin, verified
+        // emails on FREE_ACCESS_DOMAINS, or a subscribers/{uid} doc with comp:true.
+        const FREE_ACCESS_DOMAINS = ['arizona.edu', 'lmu.edu'];
+        const LS_CHECKOUT_URL = '';
+        const SUBSCRIPTION_GATE_ON = !!LS_CHECKOUT_URL;
+        function hasFreeAccess() {
+            if (!currentUser || !currentUser.emailVerified || !currentUser.email) return false;
+            const domain = currentUser.email.toLowerCase().split('@')[1] || '';
+            return FREE_ACCESS_DOMAINS.some(d => domain === d || domain.endsWith('.' + d));
+        }
+        function isFreeAccessDomainEmail() {
+            const domain = (currentUser?.email || '').toLowerCase().split('@')[1] || '';
+            return FREE_ACCESS_DOMAINS.some(d => domain === d || domain.endsWith('.' + d));
+        }
 
         // Unit conversion helpers
         function useMetric() {
@@ -1841,30 +1878,141 @@
             undoStack: []
         };
 
+        // Loads the player profile and routes to the right first screen. Runs only
+        // once the subscription gate (below) has passed.
+        async function enterApp() {
+            try {
+                const profileDoc = await db.collection('players').doc(currentUser.uid).get();
+                console.log('[PROFILE] Profile exists?', profileDoc.exists);
+                if (profileDoc.exists) {
+                    userProfile = profileDoc.data();
+                    console.log('[PROFILE] Loaded profile:', userProfile);
+                    if ((userProfile.role || 'manager') === 'coach') showCommandCenterScreen();
+                    else showHomeScreen();
+                    // Fire-and-forget, one-time-per-account — never blocks login/screen show.
+                    migrateHiddenMatchSets();
+                } else {
+                    console.log('[PROFILE] No profile found, showing setup');
+                    showProfileSetup();
+                }
+            } catch (error) {
+                console.error('[PROFILE] Error loading profile:', error);
+                showProfileSetup();
+            }
+        }
+
+        // Access gate. Returns { ok, reason }. Gate off → always ok.
+        async function checkAccess() {
+            if (!SUBSCRIPTION_GATE_ON) return { ok: true, reason: 'gate-off' };
+            if (isAdmin()) return { ok: true, reason: 'admin' };
+            if (hasFreeAccess()) return { ok: true, reason: 'edu' };
+            try {
+                const snap = await db.collection('subscribers').doc(currentUser.uid).get();
+                const sub = snap.exists ? snap.data() : null;
+                if (sub) {
+                    if (sub.comp === true) return { ok: true, reason: 'comp' };
+                    if (sub.status === 'on_trial' || sub.status === 'active' || sub.status === 'past_due') return { ok: true, reason: 'subscribed' };
+                    // Cancelled subscriptions stay valid until the paid period ends.
+                    if (sub.status === 'cancelled' && sub.ends_at && new Date(sub.ends_at) > new Date()) return { ok: true, reason: 'subscribed' };
+                }
+                return { ok: false, reason: 'no-subscription' };
+            } catch (error) {
+                console.error('[ACCESS] Could not read subscription:', error);
+                return { ok: false, reason: 'error' };
+            }
+        }
+
+        function showPaywall(reason) {
+            hideAllScreens();
+            document.getElementById('paywallScreen').classList.remove('hidden');
+            const needsVerify = isFreeAccessDomainEmail() && !currentUser.emailVerified;
+            document.getElementById('paywallVerifyRow').classList.toggle('hidden', !needsVerify);
+            document.getElementById('paywallSubscribeRow').classList.toggle('hidden', false);
+            document.getElementById('paywallTitle').textContent = needsVerify ? 'Verify your school email' : 'Subscribe to Side or Serve';
+            document.getElementById('paywallBody').textContent = needsVerify
+                ? `We sent a verification link to ${currentUser.email}. Click it, then tap "I've verified my email" for free access.`
+                : 'Your account needs an active subscription to use Side or Serve.';
+            const msg = document.getElementById('paywallMessage');
+            if (reason === 'error') {
+                msg.textContent = "We couldn't check your subscription. Check your connection and tap \"check again\".";
+                msg.classList.remove('hidden');
+            } else {
+                msg.classList.add('hidden');
+            }
+        }
+
+        function setPaywallMessage(text) {
+            const msg = document.getElementById('paywallMessage');
+            msg.textContent = text;
+            msg.classList.remove('hidden');
+        }
+
+        async function paywallRecheckAccess() {
+            const result = await checkAccess();
+            if (result.ok) { await enterApp(); } else { showPaywall(result.reason); if (result.reason !== 'error') setPaywallMessage('No active subscription found yet.'); }
+        }
+
+        async function paywallRecheckVerified() {
+            try { await currentUser.reload(); } catch (e) { console.error('[ACCESS] reload failed:', e); }
+            await paywallRecheckAccess();
+        }
+
+        async function paywallResendVerification() {
+            try {
+                await currentUser.sendEmailVerification();
+                setPaywallMessage('Verification email sent. Check your inbox (and spam).');
+            } catch (error) {
+                setPaywallMessage(error.code === 'auth/too-many-requests' ? 'Please wait a minute before requesting another email.' : 'Could not send the email. Try again shortly.');
+            }
+        }
+
+        function startCheckout() {
+            if (!LS_CHECKOUT_URL || !currentUser) return;
+            const url = LS_CHECKOUT_URL
+                + (LS_CHECKOUT_URL.includes('?') ? '&' : '?')
+                + 'embed=1&checkout[email]=' + encodeURIComponent(currentUser.email || '')
+                + '&checkout[custom][uid]=' + encodeURIComponent(currentUser.uid);
+            const open = () => {
+                try {
+                    window.createLemonSqueezy();
+                    window.LemonSqueezy.Setup({
+                        eventHandler: (event) => { if (event.event === 'Checkout.Success') pollForSubscription(); }
+                    });
+                    window.LemonSqueezy.Url.Open(url);
+                } catch (e) { window.location.href = url; }
+            };
+            if (window.LemonSqueezy) { open(); return; }
+            const script = document.createElement('script');
+            script.src = 'https://assets.lemonsqueezy.com/lemon.js';
+            script.defer = true;
+            script.onload = open;
+            script.onerror = () => { window.location.href = url; };
+            document.head.appendChild(script);
+        }
+
+        // After checkout the webhook writes subscribers/{uid} a few seconds later.
+        let _paywallPollTimer = null;
+        function pollForSubscription() {
+            setPaywallMessage('Payment received — unlocking your account…');
+            clearInterval(_paywallPollTimer);
+            let tries = 0;
+            _paywallPollTimer = setInterval(async () => {
+                tries++;
+                const result = await checkAccess();
+                if (result.ok) { clearInterval(_paywallPollTimer); await enterApp(); }
+                else if (tries >= 30) { clearInterval(_paywallPollTimer); setPaywallMessage('Still processing. Tap "check again" in a minute.'); }
+            }, 3000);
+        }
+
         // Auth State Management
         auth.onAuthStateChanged(async (user) => {
             hideAllScreens();
             if (user) {
                 currentUser = user;
                 console.log('[AUTH] User logged in:', user.email, 'UID:', user.uid);
-                try {
-                    const profileDoc = await db.collection('players').doc(user.uid).get();
-                    console.log('[PROFILE] Profile exists?', profileDoc.exists);
-                    if (profileDoc.exists) {
-                        userProfile = profileDoc.data();
-                        console.log('[PROFILE] Loaded profile:', userProfile);
-                        if ((userProfile.role || 'manager') === 'coach') showCommandCenterScreen();
-                        else showHomeScreen();
-                        // Fire-and-forget, one-time-per-account — never blocks login/screen show.
-                        migrateHiddenMatchSets();
-                    } else {
-                        console.log('[PROFILE] No profile found, showing setup');
-                        showProfileSetup();
-                    }
-                } catch (error) {
-                    console.error('[PROFILE] Error loading profile:', error);
-                    showProfileSetup();
-                }
+                const access = await checkAccess();
+                if (!access.ok) { showPaywall(access.reason); return; }
+                await enterApp();
             } else {
                 console.log('[AUTH] User logged out');
                 currentUser = null;
@@ -1898,6 +2046,7 @@
             document.getElementById('quickStatsScreen').classList.add('hidden');
             document.getElementById('commandCenterScreen').classList.add('hidden');
             document.getElementById('rosterScreen').classList.add('hidden');
+            document.getElementById('paywallScreen').classList.add('hidden');
         }
 
         function showAuthScreen() {
@@ -2826,7 +2975,11 @@
                 return;
             }
             auth.createUserWithEmailAndPassword(email, password)
-                .then(() => showSuccess('Account created successfully!'))
+                .then((cred) => {
+                    // Free access for school emails depends on a verified address.
+                    if (cred.user && !cred.user.emailVerified) cred.user.sendEmailVerification().catch(() => {});
+                    showSuccess('Account created successfully!');
+                })
                 .catch((error) => showError(error.message));
         }
 

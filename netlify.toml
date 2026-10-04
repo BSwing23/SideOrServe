@@ -5,6 +5,16 @@
 
 [build]
   publish = "."
+  functions = "netlify/functions"
+
+[build.environment]
+  # index.html contains the public Firebase web apiKey (an identifier, not a
+  # credential). Keep it from tripping Netlify's secret scan.
+  SECRETS_SCAN_OMIT_PATHS = "index.html"
+
+[functions]
+  node_bundler = "esbuild"
+  external_node_modules = ["firebase-admin"]
 
 [build.processing]
   skip_processing = true
