@@ -8520,16 +8520,16 @@
                     <div style="background:rgba(255,255,255,0.10);border-radius:6px;margin-bottom:4px;padding:8px 10px;">
                         <div style="font-weight:bold;margin-bottom:6px;">🏐 Coin Toss</div>
                         <div style="display:flex;justify-content:space-between;padding:2px 0;font-size:0.9em;">
-                            <span style="opacity:0.7;">Real Points to Win</span>
+                            <span style="opacity:0.7;">Real Points to Win (points won while serving)</span>
                             <span style="font-weight:bold;">${recAdv.rpsToWin}</span>
                         </div>
                         <div style="display:flex;justify-content:space-between;padding:2px 0;font-size:0.9em;">
-                            <span style="opacity:0.7;">Receive first: Win at ${recAdv.receiveScenario}</span>
-                            <span style="font-weight:bold;">need ${recAdv.receivePct.toFixed(1)}% of RPs</span>
+                            <span style="opacity:0.7;">Receive first: win the set at ${recAdv.receiveScenario} in real points</span>
+                            <span style="font-weight:bold;">need ${recAdv.receivePct.toFixed(1)}% of real points</span>
                         </div>
                         <div style="display:flex;justify-content:space-between;padding:2px 0;font-size:0.9em;">
-                            <span style="opacity:0.7;">Serve first: Win at ${recAdv.serveScenario}</span>
-                            <span style="font-weight:bold;">need ${recAdv.servePct.toFixed(1)}% of RPs</span>
+                            <span style="opacity:0.7;">Serve first: win the set at ${recAdv.serveScenario} in real points</span>
+                            <span style="font-weight:bold;">need ${recAdv.servePct.toFixed(1)}% of real points</span>
                         </div>
                         <div style="display:flex;justify-content:space-between;padding:2px 0;font-size:0.9em;border-top:1px solid rgba(255,255,255,0.10);margin-top:4px;padding-top:4px;">
                             <span style="opacity:0.7;">Receive-first advantage</span>
@@ -8960,7 +8960,7 @@
                 return `<div class="stat-box">
                     <h3>📊 SCORE-STATE WIN PROBABILITY — 15-POINT SETS</h3>
                     ${firstSwitch15Block}
-                    <div style="font-size:0.82em;opacity:0.65;margin-bottom:12px;line-height:1.5;">15-pt deciding sets only. Excludes V15 virtual data. How often does the leading team at each checkpoint go on to win?</div>
+                    <div style="font-size:0.82em;opacity:0.65;margin-bottom:12px;line-height:1.5;">Real 15-pt deciding sets only. How often does the leading team at each checkpoint go on to win?</div>
                     <div style="${sswp15Hdr}">At 5 total points</div>
                     ${sswp15Block('Ahead 5-0', sswp15_b50)}
                     ${sswp15Block('Ahead 4-1', sswp15_b41)}
@@ -9242,24 +9242,6 @@
                         }).join('')}
                     </div>`;
 
-                    // TEMP DIAGNOSTIC: switch-math investigation — logs exactly what each
-                    // set at this venue contributed to n21/n15/totalPointsSum21/
-                    // totalPointsSum15, so an identical-looking 21pt/15pt switch line can
-                    // be checked against real underlying data instead of guessed at. Safe
-                    // to remove once the investigation is resolved.
-                    console.log('[SWITCH-MATH-DEBUG]', vd.name, {
-                        n21, n15, totalPointsSum21, totalPointsSum15,
-                        avgPts21: n21 > 0 ? (totalPointsSum21 / n21).toFixed(2) : null,
-                        avgPts15: n15 > 0 ? (totalPointsSum15 / n15).toFixed(2) : null,
-                        sets: sets.map(d => ({
-                            gameType: d.gameType,
-                            ourScore: d.ourScore,
-                            theirScore: d.theirScore,
-                            totalPointsPlayed: d.totalPointsPlayed,
-                            virtual15: d.virtual15 ? { totalPoints: d.virtual15.totalPoints, actualScore: d.virtual15.actualScore } : null
-                        }))
-                    });
-
                     // Switch math spelled out — separate averages for each set type
                     if (n > 0) {
                         const avgPts21 = n21 > 0 ? totalPointsSum21 / n21 : null;
@@ -9269,7 +9251,7 @@
                             const rem21 = Math.floor(avgPts21 % 7);
                             const end21 = sw21 % 2 === 0 ? 'starting side' : 'opposite side';
                             html += `<div style="font-size:0.85em;opacity:0.8;padding:6px 0;border-top:1px solid rgba(255,255,255,0.08);margin-top:6px;">
-                                In 21-pt sets you switch <strong>${sw21}</strong> times, ending on your <strong>${end21}</strong> for <strong>${rem21}</strong> extra serves.
+                                In an average 21-pt set (<strong>${Math.round(avgPts21)}</strong> points), sides switch <strong>${sw21}</strong> times (every 7 points). ${rem21 === 0 ? 'The set ends right as sides switch.' : `The last <strong>${rem21}</strong> point${rem21 === 1 ? '' : 's'} are played on your <strong>${end21}</strong>.`}
                             </div>`;
                         }
                         if (avgPts15 !== null) {
@@ -9277,7 +9259,7 @@
                             const rem15 = Math.floor(avgPts15 % 5);
                             const end15 = sw15 % 2 === 0 ? 'starting side' : 'opposite side';
                             html += `<div style="font-size:0.85em;opacity:0.8;padding:6px 0;border-top:1px solid rgba(255,255,255,0.08);margin-top:6px;">
-                                In 15-pt sets you switch <strong>${sw15}</strong> times, ending on your <strong>${end15}</strong> for <strong>${rem15}</strong> extra serves.
+                                In an average 15-pt set (<strong>${Math.round(avgPts15)}</strong> points), sides switch <strong>${sw15}</strong> times (every 5 points). ${rem15 === 0 ? 'The set ends right as sides switch.' : `The last <strong>${rem15}</strong> point${rem15 === 1 ? '' : 's'} are played on your <strong>${end15}</strong>.`}
                             </div>`;
                         } else {
                             html += `<div style="font-size:0.85em;opacity:0.8;padding:6px 0;border-top:1px solid rgba(255,255,255,0.08);margin-top:6px;">
@@ -9879,9 +9861,9 @@
                         </div>
                         <div style="font-size:0.85em;opacity:0.75;">
                             ${_optReceiveAdv ? `
-                                Real Points to Win: <strong>${_optReceiveAdv.rpsToWin}</strong><br>
-                                Receive first: win at ${_optReceiveAdv.receiveScenario} (need ${_optReceiveAdv.receivePct.toFixed(1)}% of RPs)<br>
-                                Serve first: win at ${_optReceiveAdv.serveScenario} (need ${_optReceiveAdv.servePct.toFixed(1)}% of RPs)<br>
+                                Real Points to Win (points won while serving): <strong>${_optReceiveAdv.rpsToWin}</strong><br>
+                                Receive first: win the set at ${_optReceiveAdv.receiveScenario} in real points (need ${_optReceiveAdv.receivePct.toFixed(1)}% of real points)<br>
+                                Serve first: win the set at ${_optReceiveAdv.serveScenario} in real points (need ${_optReceiveAdv.servePct.toFixed(1)}% of real points)<br>
                                 = <strong>${_optReceiveAdv.advantagePct.toFixed(1)}% easier</strong>
                             ` : 'Structural default — receiving first requires one fewer real point to win. Add match data to see side-specific guidance.'}
                         </div>
@@ -10079,9 +10061,9 @@
                     <div style="margin-bottom:10px;padding-bottom:8px;border-bottom:1px solid rgba(255,255,255,0.12);">
                         <div style="font-size:0.88em;font-weight:bold;opacity:0.6;margin-bottom:5px;text-transform:uppercase;letter-spacing:0.03em;">Receive-First Advantage (the structural baseline)</div>
                         <div style="padding:5px 8px;background:rgba(255,255,255,0.06);border-radius:4px;">
-                            Real Points to Win: <strong>${receiveAdv.rpsToWin}</strong><br>
-                            Receive first: win at ${receiveAdv.receiveScenario} (need ${receiveAdv.receivePct.toFixed(1)}% of RPs)<br>
-                            Serve first: win at ${receiveAdv.serveScenario} (need ${receiveAdv.servePct.toFixed(1)}% of RPs)<br>
+                            Real Points to Win (points won while serving): <strong>${receiveAdv.rpsToWin}</strong><br>
+                            Receive first: win the set at ${receiveAdv.receiveScenario} in real points (need ${receiveAdv.receivePct.toFixed(1)}% of real points)<br>
+                            Serve first: win the set at ${receiveAdv.serveScenario} in real points (need ${receiveAdv.servePct.toFixed(1)}% of real points)<br>
                             = <strong>${receiveAdv.advantagePct.toFixed(1)}% easier</strong> / ${recAdvPts.toFixed(2)} pts edge
                         </div>
                     </div>
@@ -10100,7 +10082,7 @@
                     <div style="border-top:1px solid rgba(255,255,255,0.12);padding-top:7px;margin-bottom:7px;font-size:0.88em;font-weight:bold;opacity:0.6;text-transform:uppercase;letter-spacing:0.03em;">The 4 Choices (${_scoreCtx})</div>
                     <div style="margin-bottom:7px;padding:6px 8px;background:${_sc1Bg};border-left:2px solid ${_sc1Brd};border-radius:4px;">
                         <div style="font-weight:bold;margin-bottom:2px;">1. We win toss → Receive first${_sc1Lbl}</div>
-                        <div style="opacity:0.85;">Receiving first requires one fewer real-point break to win. N=${receiveAdv.rpsToWin} RPs to win → receive needs ${receiveAdv.receivePct.toFixed(1)}% of RPs vs ${receiveAdv.servePct.toFixed(1)}% serving — a ${receiveAdv.advantagePct.toFixed(1)}% structural edge.</div>
+                        <div style="opacity:0.85;">Receiving first requires one fewer real-point break to win. N=${receiveAdv.rpsToWin} RPs to win → receive needs ${receiveAdv.receivePct.toFixed(1)}% of real points vs ${receiveAdv.servePct.toFixed(1)}% serving — a ${receiveAdv.advantagePct.toFixed(1)}% structural edge.</div>
                     </div>
                     <div style="margin-bottom:7px;padding:6px 8px;background:${_sc2Bg};border-left:2px solid ${_sc2Brd};border-radius:4px;">
                         <div style="font-weight:bold;margin-bottom:2px;">2. We win toss → Choose ${betterSide} side first${_sc2Lbl}</div>
