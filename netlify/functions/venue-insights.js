@@ -8,6 +8,7 @@
 
 const admin = require("firebase-admin");
 const { init } = require("./lib/access");
+const TEST_VENUES = require("./lib/testVenues");
 
 const THIN_N = 10;
 const OPPOSITE = { north: "south", south: "north", east: "west", west: "east",
@@ -26,7 +27,7 @@ const json = (statusCode, body) => ({
 function computeVenueInsights(sets, sinceMs) {
   const used = sets.filter((d) =>
     d.complete && d.includedInStats !== false && !d.mirroredFromSetId &&
-    d.venueId !== "test-beach" &&
+    !TEST_VENUES.includes(d.venueId) &&
     typeof d.ourScore === "number" && typeof d.theirScore === "number" && d.ourScore !== d.theirScore &&
     (d.createdAtMs || 0) >= sinceMs);
 
@@ -93,7 +94,7 @@ exports.computeVenueInsights = computeVenueInsights;
 
 exports.handler = async (event) => {
   const venue = String((event.queryStringParameters || {}).venue || "");
-  if (!/^[a-z0-9-]{1,60}$/.test(venue) || venue === "test-beach") return json(400, { error: "Bad venue" });
+  if (!/^[a-z0-9-]{1,60}$/.test(venue) || TEST_VENUES.includes(venue)) return json(400, { error: "Bad venue" });
   const since = Math.max(0, parseInt((event.queryStringParameters || {}).since, 10) || 0);
 
   try { init(); } catch (e) {

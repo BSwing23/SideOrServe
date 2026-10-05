@@ -803,7 +803,7 @@
                 <option value="queens-beach">Queen's Beach, Honolulu</option>
                 <option value="gcu-beach">GCU Beach Volleyball Stadium</option>
                 <option value="stanford-beach">Stanford Beach Volleyball Courts</option>
-                <option value="gasa-beach">GASA Beach — Half Moon Caye, Belize 🌴</option>
+                <option value="gasa-beach">⚠️ GASA BEACH (test) — Belize weather, not counted in any stats</option>
             </select>
         </div>
         
@@ -1637,12 +1637,16 @@
                 program: '',
                 coach: ''
             },
+            // Second test venue: real Belize weather (often gnarly) for exercising wind
+            // features. isTestVenue keeps it first in every dropdown and out of every stat,
+            // the community pool, GPS detection and the public board numbers.
             'gasa-beach': {
-                name: 'GASA Beach — Half Moon Caye, Belize',
+                name: '⚠️ GASA BEACH (test) — Belize weather, not counted in any stats',
                 location: { lat: 17.2134, lon: -87.5296 },
                 orientation: 'Northwest-Southeast',
                 program: 'GASA Test Venue',
-                coach: 'Brian Olmstead'
+                coach: 'Brian Olmstead',
+                isTestVenue: true
             },
             'gcu-beach': {
                 name: 'GCU Beach Volleyball Stadium',
@@ -6450,6 +6454,8 @@
                 // user's own venue list, not a globally unique id, so pooling custom
                 // venues would silently merge unrelated courts.
                 if (!venueId || !venues[venueId]) return;
+                // Test venues never enter the community pool.
+                if (isTestVenueId(venueId)) return;
                 // Wind picked from a preset (not measured) must never enter the community pool.
                 if (matchState.weatherAtSetStart?.isEstimatedWind) return;
                 const segments = matchState.completedSegments || [];
@@ -7728,7 +7734,7 @@
             hideAllScreens();
             document.getElementById('boardScreen').classList.remove('hidden');
             const sel = document.getElementById('boardVenueSelect');
-            sel.innerHTML = getVenueEntriesForDropdown().filter(([, v]) => !v.isTestVenue || BOARD_VENUE_PARAM === 'test-beach')
+            sel.innerHTML = getVenueEntriesForDropdown().filter(([k, v]) => !v.isTestVenue || BOARD_VENUE_PARAM === k)
                 .map(([k, v]) => `<option value="${k}">${escHtml(v.name)}</option>`).join('');
             const start = venues[BOARD_VENUE_PARAM] ? BOARD_VENUE_PARAM : 'bear-down-beach';
             sel.value = start;
@@ -7833,6 +7839,10 @@
         async function loadBoardInsights() {
             const box = document.getElementById('boardInsights');
             if (!box || !_boardVenue) return;
+            if (isTestVenueId(_boardVenue)) {
+                box.innerHTML = '<p style="opacity:0.7;">This is a test venue — its matches are never counted, so there are no on-air numbers.</p>';
+                return;
+            }
             try {
                 const resp = await fetch('/.netlify/functions/venue-insights?venue=' + encodeURIComponent(_boardVenue) + '&since=' + boardWindowSince());
                 if (!resp.ok) throw new Error('HTTP ' + resp.status);

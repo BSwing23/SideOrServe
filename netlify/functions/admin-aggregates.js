@@ -7,6 +7,7 @@
    ========================================================= */
 
 const admin = require("firebase-admin");
+const TEST_VENUES = require("./lib/testVenues");
 
 const ADMIN_EMAIL = "brian.scott.swingle@gmail.com";
 const THIN_N = 10; // below this a bucket is flagged as thin data
@@ -40,7 +41,7 @@ function computeAggregates(sets) {
   sets.forEach((d) => {
     if (!d.complete) return;
     if (d.includedInStats === false) return;
-    if (d.venueId === "test-beach") return;       // test venue never counts
+    if (TEST_VENUES.includes(d.venueId)) return; // test venues never count
     if (d.mirroredFromSetId) return;              // partner mirror of a set already counted
     if (typeof d.ourScore !== "number" || typeof d.theirScore !== "number") return;
     if (d.ourScore === d.theirScore) return;
