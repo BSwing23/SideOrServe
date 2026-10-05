@@ -1,3 +1,14 @@
+# Public live scores page (clean URLs). Must come before the catch-all below.
+[[redirects]]
+  from = "/live"
+  to = "/live.html"
+  status = 200
+
+[[redirects]]
+  from = "/live/*"
+  to = "/live.html"
+  status = 200
+
 [[redirects]]
   from = "/*"
   to = "/index.html"

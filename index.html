@@ -812,7 +812,7 @@
             <input type="text" id="courtNumber" placeholder="e.g. 3" maxlength="10" autocomplete="off"
                 style="width:100%;padding:12px;border-radius:10px;border:none;font-size:1em;background:rgba(255,255,255,0.9);color:#333;">
             <label style="display:flex; align-items:center; gap:8px; margin-top:10px; cursor:pointer; font-weight:normal;">
-                <input type="checkbox" id="broadcastToggle" style="width:18px; height:18px; cursor:pointer;" onchange="try{localStorage.setItem('sos_broadcast', this.checked ? '1' : '0')}catch(e){}">
+                <input type="checkbox" id="broadcastToggle" style="width:18px; height:18px; cursor:pointer;" onchange="rememberBroadcastChoice(this.checked)">
                 📺 Show this match on the venue's live board
             </label>
             <div style="font-size:0.78em; opacity:0.6; margin-top:4px;">Shares only player names and scores, live. Built-in venues only.</div>
@@ -2856,9 +2856,6 @@
             // Show admin-only blocks only for the primary account
             const _adminSec = document.getElementById('adminOverrideBlocks');
             if (_adminSec) _adminSec.style.display = isAdmin() ? '' : 'none';
-            // Live board opt-in is remembered per device (one tick on each scoring iPad).
-            const _bt = document.getElementById('broadcastToggle');
-            if (_bt) { try { _bt.checked = localStorage.getItem('sos_broadcast') === '1'; } catch (e) {} }
             // Scorekeepers name Player 1 for each match (prefilled with the account owner's name).
             const _actingBlock = document.getElementById('actingPlayerBlock');
             if (_actingBlock) {
@@ -3913,6 +3910,7 @@
             if (venue) {
                 matchSetup.venue = venueId;
                 matchSetup.venueName = venue.name;
+                applyBroadcastDefault(venueId);
                 matchSetup.orientation = await ensureVenueOrientation(venue, venueId);
 
                 // Remember for next time
@@ -7662,6 +7660,23 @@
         // ============================================================
         let _boardPublishTimer = null;
 
+        // Live board sharing is per venue: off unless the scorer turns it on, except at
+        // venues listed here, where it starts on (the scorer can still untick it, and that
+        // choice is remembered on the device for that venue).
+        const BROADCAST_DEFAULT_VENUES = ['manhattan-beach-ca'];
+
+        function applyBroadcastDefault(venueId) {
+            const el = document.getElementById('broadcastToggle');
+            if (!el) return;
+            let stored = null;
+            try { stored = localStorage.getItem('sos_broadcast_' + venueId); } catch (e) {}
+            el.checked = stored !== null ? stored === '1' : BROADCAST_DEFAULT_VENUES.includes(venueId);
+        }
+
+        function rememberBroadcastChoice(checked) {
+            try { localStorage.setItem('sos_broadcast_' + matchSetup.venue, checked ? '1' : '0'); } catch (e) {}
+        }
+
         function boardLastName(n) { return String(n || '').trim().split(/\s+/).pop() || ''; }
 
         function boardDocId() {
@@ -7719,7 +7734,7 @@
             let venueId = 'bear-down-beach';
             try { venueId = localStorage.getItem('gasaBeach_lastVenue') || venueId; } catch (e) {}
             if (!venues[venueId]) venueId = 'bear-down-beach';
-            window.open(location.origin + '/?board=' + encodeURIComponent(venueId), '_blank');
+            window.open(location.origin + '/live/' + encodeURIComponent(venueId), '_blank');
         }
 
         // ── Board page ────────────────────────────────────────────────

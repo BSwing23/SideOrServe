@@ -1,0 +1,271 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Live Scores - Side or Serve</title>
+    <meta name="description" content="Live beach volleyball scores, court by court.">
+    <link rel="icon" href="/logo.png">
+    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-firestore-compat.js"></script>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #121212; min-height: 100vh; color: white; padding: 10px; }
+        .page { max-width: 1100px; margin: 0 auto; background: rgba(255,255,255,0.1); border-radius: 20px; padding: 22px; box-shadow: 0 8px 32px rgba(0,0,0,0.3); }
+        header { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; margin-bottom: 10px; }
+        header img { width: 56px; height: 56px; }
+        h1 { font-size: 1.7em; line-height: 1.15; }
+        h2 { font-size: 1.3em; margin: 26px 0 6px; }
+        .sub { font-size: 0.82em; opacity: 0.65; }
+        .status { margin-left: auto; font-size: 0.8em; opacity: 0.7; text-align: right; }
+        select, button { font-family: inherit; }
+        select { width: 100%; max-width: 420px; padding: 8px 10px; border-radius: 6px; background: rgba(255,255,255,0.10); color: white; border: 1px solid rgba(255,255,255,0.25); font-size: 0.9em; margin: 6px 0 14px; }
+        select option { color: #222; }
+        .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 12px; }
+        .card { background: rgba(255,255,255,0.07); border: 1px solid rgba(255,255,255,0.15); border-radius: 12px; padding: 14px 16px; }
+        .card.stale { opacity: 0.65; }
+        .card-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; gap: 8px; }
+        .court { font-size: 1.05em; font-weight: 800; letter-spacing: 0.04em; }
+        .venue-tag { font-size: 0.72em; opacity: 0.6; font-weight: 400; letter-spacing: 0; display: block; }
+        .badge { font-size: 0.7em; font-weight: 800; letter-spacing: 0.08em; padding: 3px 9px; border-radius: 20px; background: rgba(255,255,255,0.12); color: rgba(255,255,255,0.8); white-space: nowrap; }
+        .badge.live { background: #981E32; color: white; }
+        .row { display: flex; justify-content: space-between; align-items: center; padding: 8px 0; }
+        .row + .row { border-top: 1px solid rgba(255,255,255,0.12); }
+        .team { font-size: 1.25em; font-weight: 600; opacity: 0.85; min-width: 0; }
+        .team.lead { font-weight: 800; opacity: 1; }
+        .players { font-size: 0.78em; opacity: 0.6; margin-left: 1.5em; font-weight: 400; }
+        .score { font-size: 2.6em; font-weight: 900; line-height: 1; opacity: 0.75; }
+        .score.lead { opacity: 1; }
+        .dot { display: inline-block; width: 1.1em; }
+        .foot { font-size: 0.82em; opacity: 0.75; margin-top: 8px; }
+        .empty { text-align: center; opacity: 0.7; padding: 30px 10px; border: 1px dashed rgba(255,255,255,0.25); border-radius: 10px; }
+        .tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 10px; margin-bottom: 14px; }
+        .tile { background: rgba(255,255,255,0.07); border: 1px solid rgba(255,255,255,0.15); border-radius: 10px; padding: 12px 14px; }
+        .tile .t { font-size: 0.72em; letter-spacing: 0.07em; opacity: 0.6; text-transform: uppercase; }
+        .tile .b { font-size: 1.5em; font-weight: 800; margin: 4px 0; }
+        .tile .s { font-size: 0.82em; opacity: 0.75; }
+        .small { opacity: 0.6; font-size: 0.8em; }
+        .winbtns { display: flex; gap: 5px; margin-bottom: 12px; }
+        .winbtns button { flex: 1; max-width: 140px; padding: 6px 0; border-radius: 6px; border: 1px solid rgba(255,255,255,0.15); cursor: pointer; font-size: 0.85em; font-weight: bold; background: rgba(255,255,255,0.06); color: rgba(255,255,255,0.5); }
+        .winbtns button.on { border-color: rgba(255,255,255,0.3); background: rgba(255,255,255,0.18); color: white; }
+        .say { background: rgba(255,255,255,0.06); border-left: 3px solid #981E32; border-radius: 6px; padding: 12px 14px; }
+        .say .t { font-size: 0.72em; letter-spacing: 0.07em; opacity: 0.6; text-transform: uppercase; margin-bottom: 6px; }
+        .say div + div { margin: 5px 0; }
+        .copy { background: rgba(255,255,255,0.12); border: 1px solid rgba(255,255,255,0.25); color: white; padding: 6px 14px; border-radius: 6px; cursor: pointer; font-size: 0.8em; }
+        a { color: white; }
+    </style>
+</head>
+<body>
+<div class="page">
+    <header>
+        <img src="/logo.png" alt="Side or Serve">
+        <div>
+            <h1 id="title">Live Scores</h1>
+            <div class="sub">Live beach volleyball, court by court</div>
+        </div>
+        <div class="status"><div id="status">Connecting…</div><button class="copy" id="copyBtn" style="margin-top:6px;">Copy link</button></div>
+    </header>
+
+    <select id="venueSelect" aria-label="Choose a venue"></select>
+    <div id="cards"></div>
+
+    <div id="onair" style="display:none;">
+        <h2>On-Air Numbers</h2>
+        <div class="sub" style="margin-bottom:10px;">Anonymous totals from every completed set scored here. Small samples are flagged.</div>
+        <div class="winbtns" id="winbtns"></div>
+        <div id="insights"><p class="small">Loading…</p></div>
+    </div>
+    <p class="small" style="margin-top:22px;">Scores appear when a scorer chooses to share a match. Powered by Side or Serve.</p>
+</div>
+
+<script>
+    // Public web config (an identifier, not a secret — access is enforced by Firestore rules).
+    firebase.initializeApp({
+        apiKey: "AIzaSyDR_HLg8pXSLGYim7sBdErrBrS3167gPZY",
+        authDomain: "gasa-beach.firebaseapp.com",
+        projectId: "gasa-beach"
+    });
+    const db = firebase.firestore();
+
+    // Keep in sync with the isTestVenue entries in index.html's `venues`.
+    const TEST_VENUES = ['test-beach', 'gasa-beach'];
+
+    // /live            -> every venue with matches on the board
+    // /live/<venueId>  -> one venue (+ on-air numbers)
+    const pathVenue = (location.pathname.match(/^\/live\/([a-z0-9-]+)/) || [])[1] || '';
+    const queryVenue = new URLSearchParams(location.search).get('venue') || '';
+    let venue = pathVenue || queryVenue;
+
+    let docs = {};
+    let unsub = null;
+    let lastSnap = 0;
+    let win = 'today';
+    // venueId -> display name, learned from board entries; a few known names cover the
+    // time before anything has been posted at a venue.
+    const names = {
+        'bear-down-beach': 'Bear Down Beach (University of Arizona)',
+        'manhattan-beach-ca': 'Manhattan Beach, CA',
+        'lmu-beach': 'LMU Beach Volleyball Courts',
+        'stanford-beach': 'Stanford Beach Volleyball Courts',
+        'queens-beach': "Queen's Beach, Honolulu"
+    };
+
+    const $ = id => document.getElementById(id);
+    const esc = v => String(v == null ? '' : v).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+    function subscribe() {
+        if (unsub) { unsub(); unsub = null; }
+        docs = {};
+        const q = venue ? db.collection('liveBoard').where('venueId', '==', venue) : db.collection('liveBoard');
+        unsub = q.onSnapshot(snap => {
+            docs = {};
+            snap.docs.forEach(d => { const x = d.data(); docs[d.id] = x; if (x.venueId && x.venueName) names[x.venueId] = x.venueName; });
+            lastSnap = Date.now();
+            renderSelect();
+            renderCards();
+            $('status').textContent = 'Live · updates automatically';
+        }, err => {
+            console.error(err);
+            $('status').textContent = 'Connection problem — retrying';
+        });
+    }
+
+    function setVenue(v) {
+        venue = v;
+        try { history.replaceState(null, '', v ? '/live/' + v : '/live'); } catch (e) {}
+        $('onair').style.display = v ? 'block' : 'none';
+        subscribe();
+        if (v) loadInsights();
+        renderTitle();
+    }
+
+    function renderTitle() {
+        const n = venue ? (names[venue] || venue.replace(/-/g, ' ').replace(/\b\w/g, c => c.toUpperCase())) : 'Live Scores';
+        $('title').textContent = venue ? n : 'Live Scores';
+        document.title = (venue ? n + ' — ' : '') + 'Live Scores - Side or Serve';
+    }
+
+    function renderSelect() {
+        const sel = $('venueSelect');
+        const ids = new Set(Object.values(docs).map(d => d.venueId).filter(v => v && (!TEST_VENUES.includes(v) || v === venue)));
+        if (venue) ids.add(venue);
+        const opts = ['<option value="">All venues with live matches</option>']
+            .concat([...ids].sort((a, b) => (names[a] || a).localeCompare(names[b] || b))
+                .map(v => `<option value="${esc(v)}">${esc(names[v] || v.replace(/-/g, ' '))}</option>`));
+        sel.innerHTML = opts.join('');
+        sel.value = venue;
+        renderTitle();
+    }
+
+    function renderCards() {
+        const now = Date.now();
+        let rows = Object.entries(docs).map(([id, d]) => {
+            const ms = d.updatedAt && d.updatedAt.toMillis ? d.updatedAt.toMillis() : now;
+            return { d, age: now - ms };
+        }).filter(r => r.d.status === 'final' ? r.age < 45 * 60000 : r.age < 3 * 3600000);
+        if (!venue) rows = rows.filter(r => !TEST_VENUES.includes(r.d.venueId));
+        rows.sort((a, b) => String(a.d.venueName).localeCompare(String(b.d.venueName)) ||
+            String(a.d.court).localeCompare(String(b.d.court), undefined, { numeric: true }) || a.age - b.age);
+        const box = $('cards');
+        if (!rows.length) {
+            box.innerHTML = '<div class="empty">No matches on the board right now.<br><span class="small">Check back soon — scores appear as soon as a match starts.</span></div>';
+            return;
+        }
+        box.innerHTML = '<div class="grid">' + rows.map(({ d, age }) => {
+            const final = d.status === 'final';
+            const stale = !final && age > 10 * 60000;
+            const between = !final && d.setActive === false;
+            const badge = final ? 'FINAL' : (between ? 'BETWEEN SETS' : (stale ? 'NO RECENT UPDATE' : 'LIVE'));
+            const live = !final && !between && !stale;
+            const dot = n => d.serving === n ? '<span class="dot" style="opacity:1;">●</span>' : '<span class="dot"></span>';
+            const done = (d.sets || []).map(x => `Set ${x.n}: ${x.a ?? '–'}–${x.b ?? '–'}`).join(' · ');
+            const row = (n, name, players, score, lead) => `
+                <div class="row">
+                    <div class="team ${lead ? 'lead' : ''}">${dot(n)}${esc(name)}<div class="players">${esc((players || []).filter(Boolean).join(' & '))}</div></div>
+                    <div class="score ${lead ? 'lead' : ''}">${score}</div>
+                </div>`;
+            return `
+                <div class="card ${stale ? 'stale' : ''}">
+                    <div class="card-head">
+                        <div class="court">${d.court ? 'COURT ' + esc(d.court) : 'MATCH'}${venue ? '' : `<span class="venue-tag">${esc(d.venueName || '')}</span>`}</div>
+                        <div class="badge ${live ? 'live' : ''}">${badge}</div>
+                    </div>
+                    ${row(1, d.team1, d.team1Players, d.score1, d.score1 > d.score2)}
+                    ${row(2, d.team2, d.team2Players, d.score2, d.score2 > d.score1)}
+                    <div class="foot">Set ${d.setNumber} to ${d.maxPoints} · Sets ${d.setsWon1}–${d.setsWon2}${done ? '<br>' + esc(done) : ''}</div>
+                </div>`;
+        }).join('') + '</div>';
+    }
+
+    // ── On-air numbers ──
+    const WINDOWS = [['today', 'Today'], ['3d', 'Last 3 days'], ['all', 'All time']];
+    function since() {
+        if (win === 'all') return 0;
+        if (win === '3d') return Date.now() - 72 * 3600000;
+        const d = new Date(); d.setHours(0, 0, 0, 0); return d.getTime();
+    }
+    function renderWindows() {
+        $('winbtns').innerHTML = WINDOWS.map(([k, l]) => `<button class="${k === win ? 'on' : ''}" onclick="setWin('${k}')">${l}</button>`).join('');
+    }
+    function setWin(k) { win = k; renderWindows(); loadInsights(); }
+
+    async function loadInsights() {
+        if (!venue) return;
+        const box = $('insights');
+        try {
+            const resp = await fetch('/.netlify/functions/venue-insights?venue=' + encodeURIComponent(venue) + '&since=' + since());
+            if (resp.status === 400) { box.innerHTML = '<p class="small">This is a test venue — its matches are never counted, so there are no on-air numbers.</p>'; return; }
+            if (!resp.ok) throw new Error('HTTP ' + resp.status);
+            renderInsights(await resp.json());
+        } catch (e) {
+            console.error(e);
+            box.innerHTML = '<p class="small">Numbers are unavailable right now.</p>';
+        }
+    }
+
+    function renderInsights(r) {
+        const box = $('insights');
+        const thin = n => n < 10 ? ' <span class="small">(small sample)</span>' : '';
+        const tile = (t, b, s) => `<div class="tile"><div class="t">${t}</div><div class="b">${b}</div><div class="s">${s}</div></div>`;
+        if (!r.sets) { box.innerHTML = '<p class="small">No completed sets in this window yet.</p>'; return; }
+        const tiles = [];
+        (r.sides || []).forEach(s => {
+            const [a, b] = s.pair;
+            tiles.push(tile(`${esc(a)} vs ${esc(b)} side`, `${esc(s.leader)} +${s.edge.toFixed(1)}`,
+                `${esc(a)} ${s.shares[a].toFixed(1)}% · ${esc(b)} ${s.shares[b].toFixed(1)}% of points (${s.n} segments)${thin(s.n)}`));
+        });
+        if (r.serveFirst && r.serveFirst.n) tiles.push(tile('Serving first', `${r.serveFirst.pct.toFixed(0)}%`, `of sets won by the team that served first (${r.serveFirst.won} of ${r.serveFirst.n})${thin(r.serveFirst.n)}`));
+        if (r.firstSwitch && r.firstSwitch.n) tiles.push(tile('Leading at the first switch', `${r.firstSwitch.pct.toFixed(0)}%`, `of sets won by the team ahead at the first switch (${r.firstSwitch.leaderWon} of ${r.firstSwitch.n})${thin(r.firstSwitch.n)}`));
+        if (r.avgPoints['21'] != null) tiles.push(tile('Average 21-point set', `${r.avgPoints['21'].toFixed(1)} pts`, `${r.avgPoints.n21} sets${thin(r.avgPoints.n21)}`));
+        if (r.avgPoints['15'] != null) tiles.push(tile('Average 15-point set', `${r.avgPoints['15'].toFixed(1)} pts`, `${r.avgPoints.n15} sets${thin(r.avgPoints.n15)}`));
+        if (r.closeSets && r.closeSets.n) tiles.push(tile('Close sets', `${r.closeSets.pct.toFixed(0)}%`, `decided by 2 points or fewer (${r.closeSets.within2} of ${r.closeSets.n})${thin(r.closeSets.n)}`));
+        const lines = [];
+        (r.sides || []).forEach(s => {
+            const other = s.pair.find(x => x !== s.leader);
+            lines.push(`The ${s.leader} side is scoring ${s.edge.toFixed(1)}% more (${s.shares[s.leader].toFixed(1)}% of points vs ${s.shares[other].toFixed(1)}%)${s.n < 10 ? ' — small sample' : ''}.`);
+        });
+        if (r.serveFirst && r.serveFirst.n) lines.push(`The team that served first has won ${r.serveFirst.pct.toFixed(0)}% of sets (${r.serveFirst.won} of ${r.serveFirst.n}).`);
+        if (r.firstSwitch && r.firstSwitch.n) lines.push(`The team ahead at the first switch has gone on to win ${r.firstSwitch.pct.toFixed(0)}% of the time (${r.firstSwitch.leaderWon} of ${r.firstSwitch.n}).`);
+        box.innerHTML = `<div class="small" style="margin-bottom:10px;">${r.sets} completed sets from ${r.matches} matches</div>
+            <div class="tiles">${tiles.join('')}</div>
+            ${lines.length ? `<div class="say"><div class="t">Say it on air</div>${lines.map(l => `<div>${esc(l)}</div>`).join('')}</div>` : ''}`;
+    }
+
+    $('venueSelect').addEventListener('change', e => setVenue(e.target.value));
+    $('copyBtn').addEventListener('click', () => {
+        const url = location.origin + (venue ? '/live/' + venue : '/live');
+        (navigator.clipboard ? navigator.clipboard.writeText(url) : Promise.reject()).then(
+            () => { $('copyBtn').textContent = 'Copied'; setTimeout(() => $('copyBtn').textContent = 'Copy link', 1500); },
+            () => prompt('Copy this link:', url));
+    });
+
+    renderWindows();
+    $('onair').style.display = venue ? 'block' : 'none';
+    renderTitle();
+    subscribe();
+    if (venue) loadInsights();
+    setInterval(renderCards, 15000);          // age badges (NO RECENT UPDATE / FINAL fade-out)
+    setInterval(() => { if (venue) loadInsights(); }, 60000);
+</script>
+</body>
+</html>
