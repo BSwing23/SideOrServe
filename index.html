@@ -486,9 +486,16 @@
             .server-box { padding: 10px; min-height: 85px; }
             .score-btn { padding: 25px 15px; font-size: 1.1em; }
         }
+        body.acting-as .owner-only { display: none !important; }
     </style>
 </head>
 <body>
+    <!-- Scorekeeper banner: shown while scoring for another player -->
+    <div id="actingAsBanner" style="display:none; position:sticky; top:0; z-index:3000; align-items:center; justify-content:space-between; gap:10px; padding:8px 14px; background:#981E32; border-bottom:1px solid rgba(255,255,255,0.4); font-size:0.9em;">
+        <span>Scoring for <strong id="actingAsName"></strong></span>
+        <button onclick="exitActingAs()" style="background:rgba(0,0,0,0.25); border:1px solid white; color:white; padding:4px 12px; border-radius:6px; cursor:pointer; font-size:0.9em;">Back to my account</button>
+    </div>
+
     <!-- Loading Screen -->
     <div id="loadingScreen" class="container">
         <div class="loading">
@@ -629,11 +636,11 @@
                 <span class="profile-label">Email:</span>
                 <span class="profile-value" id="displayUserEmail">-</span>
             </div>
-            <button class="btn btn-secondary btn-small" onclick="editProfile()">Edit Profile</button>
+            <button class="btn btn-secondary btn-small owner-only" onclick="editProfile()">Edit Profile</button>
         </div>
         
         <!-- Partners Section -->
-        <div class="profile-info" style="margin-top: 20px;">
+        <div class="profile-info owner-only" style="margin-top: 20px;">
             <h3 style="border: none; margin-top: 0;">🤝 Playing Partners</h3>
             <div id="partnersList" style="margin-bottom: 15px;">
                 <p style="text-align: center; opacity: 0.7; padding: 20px 0; font-size: 0.9em;">
@@ -652,6 +659,37 @@
             </div>
         </div>
         
+        <!-- Scorekeeper invitations addressed to me -->
+        <div id="scorekeeperInvitesCard" class="profile-info" style="margin-top: 20px; display:none;">
+            <h3 style="border: none; margin-top: 0;">📨 Scorekeeper Invitations</h3>
+            <div id="scorekeeperInvitesList"></div>
+        </div>
+
+        <!-- Players I can score for -->
+        <div id="scoringForCard" class="profile-info" style="margin-top: 20px; display:none;">
+            <h3 style="border: none; margin-top: 0;">📝 Scoring For</h3>
+            <div style="font-size:0.85em; opacity:0.75; margin-bottom:10px;">Pick a player to set up matches, keep score and see their stats as their scorekeeper.</div>
+            <div id="scoringForList"></div>
+        </div>
+
+        <!-- My scorekeepers (owner) -->
+        <div class="profile-info owner-only" style="margin-top: 20px;">
+            <h3 style="border: none; margin-top: 0;">📝 Scorekeepers</h3>
+            <div id="scorekeepersList" style="margin-bottom: 15px;">
+                <p style="text-align: center; opacity: 0.7; padding: 12px 0; font-size: 0.9em;">No scorekeepers yet.</p>
+            </div>
+            <button class="btn btn-secondary btn-small" onclick="showAddScorekeeperDialog()">+ Invite Scorekeeper</button>
+            <div style="background: rgba(255,255,255,0.05); padding: 12px; border-radius: 8px; margin-top: 12px; font-size: 0.85em;">
+                <strong style="display: block; margin-bottom: 6px;">What a scorekeeper can do</strong>
+                <ul style="margin: 0; padding-left: 20px;">
+                    <li style="margin: 4px 0;">Set up matches and keep score for you and your partner</li>
+                    <li style="margin: 4px 0;">See your recommendations and all of your stats</li>
+                    <li style="margin: 4px 0;">They can't delete anything, change your profile, or link partners</li>
+                    <li style="margin: 4px 0;">Scorekeepers use the app free while you have access</li>
+                </ul>
+            </div>
+        </div>
+
         <!-- Quick Tools Section -->
         <div class="profile-info" style="margin-top: 20px;">
             <h3 style="border: none; margin-top: 0;">⚡ Quick Tools</h3>
@@ -676,7 +714,7 @@
             <button class="btn btn-primary menu-btn" style="background: rgba(152,30,50,0.9); border: 2px solid white;" onclick="returnToLiveMatch()">▶ Return to Live Match</button>
         </div>
         <!-- Admin-only: Team Roster — hidden for all other accounts -->
-        <div id="rosterHomeBtn" style="display:none;">
+        <div id="rosterHomeBtn" class="owner-only" style="display:none;">
             <button class="btn btn-secondary menu-btn" onclick="showRosterScreen()">📋 Team Roster</button>
             <button class="btn btn-secondary menu-btn" onclick="showInsightsScreen()">📊 All-User Insights</button>
         </div>
@@ -1215,7 +1253,7 @@
         </div>
         
         <button class="btn btn-secondary" onclick="showHomeScreen()">Back to Home</button>
-        <button class="btn btn-secondary" onclick="clearAllHistory()" style="background: rgba(152,30,50,0.6); border: 1px solid rgba(152,30,50,0.9); color: white; font-weight: bold; margin-top: 10px;">
+        <button class="btn btn-secondary owner-only" onclick="clearAllHistory()" style="background: rgba(152,30,50,0.6); border: 1px solid rgba(152,30,50,0.9); color: white; font-weight: bold; margin-top: 10px;">
             🗑️ Clear All History
         </button>
     </div>
@@ -1229,7 +1267,7 @@
         </div>
         
         <button class="btn btn-secondary" onclick="showMatchHistory()">Back to History</button>
-        <button class="btn btn-primary" onclick="deleteCurrentMatch()" style="background: #f44336;">Delete Match</button>
+        <button class="btn btn-primary owner-only" onclick="deleteCurrentMatch()" style="background: #f44336;">Delete Match</button>
     </div>
 
     <!-- Compass Screen -->
@@ -1286,6 +1324,7 @@
         <h2 id="paywallTitle" style="text-align:center;">Subscribe to Side or Serve</h2>
         <p id="paywallBody" style="text-align:center; opacity:0.85; margin-bottom:20px;"></p>
         <div id="paywallMessage" class="info-box hidden" style="text-align:center; margin-bottom:16px;"></div>
+        <div id="paywallInvites" class="hidden" style="margin-bottom:16px;"></div>
         <div id="paywallVerifyRow" class="hidden">
             <button class="btn btn-primary" onclick="paywallRecheckVerified()">I've verified my email</button>
             <button class="btn btn-secondary" onclick="paywallResendVerification()">Resend verification email</button>
@@ -1370,6 +1409,20 @@
         // Admin gate — manual overrides for the primary account only
         const ADMIN_EMAIL = 'brian.scott.swingle@gmail.com';
         function isAdmin() { return !!(currentUser && currentUser.email?.toLowerCase() === ADMIN_EMAIL.toLowerCase()); }
+
+        // Scorekeeper mode: a scorekeeper "acts as" the player who invited them. While
+        // actingAs is set, userProfile holds THAT player's profile and every data read/
+        // write (sets, matches, stats, rpStats) goes to that player's account via
+        // dataUid(); currentUser stays the real signed-in scorekeeper for auth,
+        // billing and provenance (creatorId/scorekeeperId on saved sets).
+        let actingAs = null; // { uid, name } while scoring for someone else
+        function dataUid() { return actingAs ? actingAs.uid : currentUser.uid; }
+        function isActingAs() { return !!actingAs; }
+        function blockIfActingAs(what) {
+            if (!actingAs) return false;
+            alert('Only ' + (actingAs.name || 'the account owner') + ' can ' + what + '.');
+            return true;
+        }
 
         // Subscription gate (Lemon Squeezy). With LS_CHECKOUT_URL empty the gate is
         // OFF and the app behaves exactly as before — safe to deploy before the
@@ -1914,10 +1967,11 @@
                 if (profileDoc.exists) {
                     userProfile = profileDoc.data();
                     console.log('[PROFILE] Loaded profile:', userProfile);
-                    if ((userProfile.role || 'manager') === 'coach') showCommandCenterScreen();
+                    await restoreActingAs();
+                    if (!actingAs && (userProfile.role || 'manager') === 'coach') showCommandCenterScreen();
                     else showHomeScreen();
                     // Fire-and-forget, one-time-per-account — never blocks login/screen show.
-                    migrateHiddenMatchSets();
+                    if (!actingAs) migrateHiddenMatchSets();
                 } else {
                     console.log('[PROFILE] No profile found, showing setup');
                     showProfileSetup();
@@ -1942,11 +1996,21 @@
                     // Cancelled subscriptions stay valid until the paid period ends.
                     if (sub.status === 'cancelled' && sub.ends_at && new Date(sub.ends_at) > new Date()) return { ok: true, reason: 'subscribed' };
                 }
-                return { ok: false, reason: 'no-subscription' };
+                return (await scorekeeperAccess()) ? { ok: true, reason: 'scorekeeper' } : { ok: false, reason: 'no-subscription' };
             } catch (error) {
                 console.error('[ACCESS] Could not read subscription:', error);
-                return { ok: false, reason: 'error' };
+                return (await scorekeeperAccess()) ? { ok: true, reason: 'scorekeeper' } : { ok: false, reason: 'error' };
             }
+        }
+
+        // A scorekeeper is free while at least one inviter who accepted still has access.
+        // Subscription records are private, so this asks the server.
+        async function scorekeeperAccess() {
+            try {
+                const idToken = await currentUser.getIdToken();
+                const resp = await fetch('/.netlify/functions/scorekeeper-access', { headers: { 'Authorization': 'Bearer ' + idToken } });
+                return resp.ok && (await resp.json()).ok === true;
+            } catch (e) { return false; }
         }
 
         function showPaywall(reason) {
@@ -1959,6 +2023,7 @@
             document.getElementById('paywallBody').textContent = needsVerify
                 ? `We sent a verification link to ${currentUser.email}. Click it, then tap "I've verified my email" for free access.`
                 : 'Your account needs an active subscription to use Side or Serve.';
+            loadPaywallInvites();
             const msg = document.getElementById('paywallMessage');
             if (reason === 'error') {
                 msg.textContent = "We couldn't check your subscription. Check your connection and tap \"check again\".";
@@ -2044,6 +2109,8 @@
                 console.log('[AUTH] User logged out');
                 currentUser = null;
                 userProfile = null;
+                actingAs = null;
+                updateActingAsBanner();
                 showAuthScreen();
             }
         });
@@ -2093,7 +2160,8 @@
             document.getElementById('homeScreen').classList.remove('hidden');
             document.getElementById('displayPlayerName').textContent = userProfile.name || '-';
             document.getElementById('displayPlayerAffiliation').textContent = userProfile.affiliation || '-';
-            document.getElementById('displayUserEmail').textContent = currentUser.email;
+            document.getElementById('displayUserEmail').textContent = isActingAs() ? (userProfile.email || '') : currentUser.email;
+            updateActingAsBanner();
             
             // Show "Return to Live Match" button if a match is in progress
             const matchInProgress = matchState && matchState.servers && (matchState.ourScore > 0 || matchState.theirScore > 0 || matchScore.setsCompleted.length > 0);
@@ -2105,8 +2173,14 @@
             // Fire-and-forget, one-time-per-admin-account — never blocks login/screen show.
             seedInitialRosterIfNeeded();
 
-            // Load partners
-            loadPartners();
+            // Partners and scorekeepers are the owner's own account management; a
+            // scorekeeper scoring for someone else never loads them.
+            if (!isActingAs()) {
+                loadPartners();
+                loadScorekeepers();
+            }
+            loadScorekeeperInvites();
+            loadScoringFor();
         }
         
         function returnToLiveMatch() {
@@ -2679,6 +2753,7 @@
         }
 
         async function saveCustomVenue(name, lat, lon, orientation) {
+            if (blockIfActingAs('add venues')) return;
             try {
                 // Check for duplicates
                 if (userProfile.customVenues) {
@@ -2871,7 +2946,7 @@
             if (!currentUser) return;
             try {
                 const snap = await db.collection('matches')
-                    .where('userId', '==', currentUser.uid)
+                    .where('userId', '==', dataUid())
                     .orderBy('updatedAt', 'desc')
                     .limit(30)
                     .get();
@@ -3035,12 +3110,16 @@
             if (confirm('Are you sure you want to log out?')) {
                 auth.signOut().then(() => {
                     userProfile = null;
+                    actingAs = null;
+                    try { sessionStorage.removeItem('sos_actingAs'); } catch (e) {}
+                    updateActingAsBanner();
                 });
             }
         }
 
         // Profile Management
         async function saveProfile() {
+            if (blockIfActingAs('edit the profile')) return;
             const name = document.getElementById('playerName').value.trim();
             const affiliation = document.getElementById('playerAffiliation').value.trim();
             if (!name) {
@@ -3145,6 +3224,7 @@
         }
         
         function editProfile() {
+            if (blockIfActingAs('edit the profile')) return;
             document.getElementById('playerName').value = userProfile.name || '';
             // Set unit preference selector
             const pref = userProfile?.unitPref || 'imperial';
@@ -4470,7 +4550,7 @@
             if (!currentUser) return;
             try {
                 const snap = await db.collection('sets')
-                    .where('userId', '==', currentUser.uid)
+                    .where('userId', '==', dataUid())
                     .limit(500).get();
 
                 const totals = {
@@ -5063,7 +5143,7 @@
                 // since they're already counted above from memory.
                 const _psTier = matchSetup.competitionTier;
                 const setsSnap = await db.collection('sets')
-                    .where('userId', '==', currentUser.uid)
+                    .where('userId', '==', dataUid())
                     .limit(500).get();
                 setsSnap.docs.forEach(doc => {
                     const d = doc.data();
@@ -6086,11 +6166,11 @@
             }
             
             try {
-                await db.collection('players').doc(currentUser.uid).update(updates);
+                await db.collection('players').doc(dataUid()).update(updates);
                 console.log('[RP STATS] Updated successfully');
 
                 // Reload profile to get updated stats
-                const profileDoc = await db.collection('players').doc(currentUser.uid).get();
+                const profileDoc = await db.collection('players').doc(dataUid()).get();
                 userProfile = profileDoc.data();
             } catch (error) {
                 console.error('[RP STATS] Error updating:', error);
@@ -6266,7 +6346,7 @@
 
             try {
                 const snapshot = await db.collection('sets')
-                    .where('userId', '==', currentUser.uid)
+                    .where('userId', '==', dataUid())
                     .limit(500).get();
                 snapshot.docs.forEach(doc => {
                     const d = doc.data();
@@ -6560,7 +6640,7 @@
 
             const setData = sanitize({
                 // Identity
-                userId: currentUser.uid,
+                userId: dataUid(),
                 matchId: currentMatchId,
                 setNumber: matchScore.currentSetNumber,
                 gameType: safe(matchSetup.gameType),
@@ -6621,12 +6701,12 @@
 
                 // Sharing
                 isShared: !!selectedPairedPartner,
-                primaryOwner: currentUser.uid,
+                primaryOwner: dataUid(),
                 creatorId: currentUser.uid,
                 scorekeeperId: currentUser.uid,
                 owners: selectedPairedPartner
-                    ? [currentUser.uid, selectedPairedPartner.partnerId]
-                    : [currentUser.uid],
+                    ? [dataUid(), selectedPairedPartner.partnerId]
+                    : [dataUid()],
 
                 updatedAt: firebase.firestore.FieldValue.serverTimestamp()
             });
@@ -6647,7 +6727,7 @@
                                 matchId: currentMatchId || null,
                                 timestamp: firebase.firestore.FieldValue.serverTimestamp(),
                                 isShared: true,
-                                sharedWith: [currentUser.uid]
+                                sharedWith: [dataUid()]
                             });
                     }
                 } else {
@@ -6717,7 +6797,7 @@
             };
 
             const matchData = sanitize({
-                userId: currentUser.uid,
+                userId: dataUid(),
                 playerName: safe(matchSetup.yourName || userProfile?.name),
                 partnerName: safe(matchSetup.partnerName),
                 opponent1Name: safe(matchSetup.opponent1Name),
@@ -6734,11 +6814,11 @@
                 })),
                 currentSetNumber: matchScore.currentSetNumber,
                 isShared: !!selectedPairedPartner,
-                primaryOwner: currentUser.uid,
+                primaryOwner: dataUid(),
                 creatorId: currentUser.uid,
                 scorekeeperId: currentUser.uid,
                 team1: {
-                    player1: { name: safe(matchSetup.yourName || userProfile?.name), userId: isAdmin() ? null : currentUser.uid },
+                    player1: { name: safe(matchSetup.yourName || userProfile?.name), userId: isAdmin() ? null : dataUid() },
                     player2: { name: safe(matchSetup.partnerName), userId: selectedPairedPartner ? selectedPairedPartner.partnerId : null }
                 },
                 team2: {
@@ -6763,7 +6843,7 @@
                     console.log('[MATCH SAVE] Created match header:', currentMatchId);
 
                     // Player subcollection reference
-                    await db.collection('players').doc(currentUser.uid)
+                    await db.collection('players').doc(dataUid())
                         .collection('matches').doc(currentMatchId)
                         .set({
                             matchId: currentMatchId,
@@ -6781,13 +6861,13 @@
                                 matchId: currentMatchId,
                                 timestamp: firebase.firestore.FieldValue.serverTimestamp(),
                                 isShared: true,
-                                sharedWith: [currentUser.uid]
+                                sharedWith: [dataUid()]
                             });
-                        await db.collection('players').doc(currentUser.uid)
+                        await db.collection('players').doc(dataUid())
                             .collection('partners').doc(selectedPairedPartner.partnerId)
                             .update({ totalMatches: firebase.firestore.FieldValue.increment(1), lastMatchDate: firebase.firestore.FieldValue.serverTimestamp() });
                         await db.collection('players').doc(selectedPairedPartner.partnerId)
-                            .collection('partners').doc(currentUser.uid)
+                            .collection('partners').doc(dataUid())
                             .update({ totalMatches: firebase.firestore.FieldValue.increment(1), lastMatchDate: firebase.firestore.FieldValue.serverTimestamp() });
                         console.log('[MATCH SAVE] Shared with partner:', selectedPairedPartner.partnerName);
                     }
@@ -6812,7 +6892,7 @@
                 
                 // Always query matches collection directly — most reliable (GASA6 pattern)
                 const directSnapshot = await db.collection('matches')
-                    .where('userId', '==', currentUser.uid)
+                    .where('userId', '==', dataUid())
                     .orderBy('updatedAt', 'desc')
                     .limit(50)
                     .get();
@@ -6826,7 +6906,7 @@
                 
                 // Also check subcollection for soft-delete and includedInStats flags
                 const refsSnap = await db.collection('players')
-                    .doc(currentUser.uid)
+                    .doc(dataUid())
                     .collection('matches')
                     .orderBy('timestamp', 'desc')
                     .limit(50)
@@ -6933,7 +7013,7 @@
                     const rowClick = setId ? `onclick="event.stopPropagation(); viewSetDetail('${setId}', '${score}')" style="cursor:pointer;"` : '';
                     return `
                         <div style="display:flex; align-items:center; gap:8px; padding:4px 0; font-size:0.85em;" ${rowClick}>
-                            <input type="checkbox" ${included ? 'checked' : ''} ${setId ? '' : 'disabled title="Legacy match — no set doc"'}
+                            <input type="checkbox" ${included ? 'checked' : ''} ${isActingAs() ? 'disabled title="Only the account owner can change this"' : ''} ${setId ? '' : 'disabled title="Legacy match — no set doc"'}
                                 onchange="event.stopPropagation(); toggleSetIncluded('${setId}', '${match.id}', ${i}, this.checked)"
                                 style="width:15px; height:15px; cursor:${setId ? 'pointer' : 'not-allowed'}; accent-color:#981E32; flex-shrink:0;">
                             <span style="color:${won ? 'white' : 'rgba(255,255,255,0.65)'}; min-width:110px; ${dimStyle}">${label}</span>
@@ -6953,7 +7033,7 @@
                                 <div class="match-details">${venue} | vs ${opp1} & ${opp2}</div>
                                 ${sets.length > 0 ? `<div style="margin-top:8px; padding-top:8px; border-top:1px solid rgba(255,255,255,0.1);" onclick="event.stopPropagation()">${setRowsHtml}</div>` : ''}
                             </div>
-                            <button onclick="deleteMatch('${match.id}', event)" style="background:rgba(152,30,50,0.6); border:1px solid rgba(152,30,50,0.9); color:white; padding:5px 10px; border-radius:5px; cursor:pointer; font-size:0.9em; flex-shrink:0;">
+                            <button class="owner-only" onclick="deleteMatch('${match.id}', event)" style="background:rgba(152,30,50,0.6); border:1px solid rgba(152,30,50,0.9); color:white; padding:5px 10px; border-radius:5px; cursor:pointer; font-size:0.9em; flex-shrink:0;">
                                 🗑️
                             </button>
                         </div>
@@ -6965,6 +7045,7 @@
         }
 
         async function toggleSetIncluded(setId, matchId, setIndex, included) {
+            if (blockIfActingAs('change what counts toward stats')) return;
             if (!setId) return; // legacy match with no set doc
             try {
                 // Update the sets collection document
@@ -6986,6 +7067,7 @@
         }
 
         async function toggleMatchIncluded(matchId, included, rowEl) {
+            if (blockIfActingAs('change what counts toward stats')) return;
             try {
                 // Update subcollection ref
                 await db.collection('players').doc(currentUser.uid)
@@ -7099,6 +7181,7 @@
 
         async function deleteMatch(matchId, event) {
             if (event) event.stopPropagation();
+            if (blockIfActingAs('delete matches')) return;
             
             if (!confirm('Remove this match from your history?\n\nMatch data is preserved for research and any partners you played with.')) {
                 return;
@@ -7497,7 +7580,358 @@
             content.innerHTML = html;
         }
 
+        // ============================================================
+        // SCOREKEEPERS
+        // An owner invites a scorekeeper by email. The scorekeeper accepts, then picks
+        // "Scoring for <owner>" on Home. While scoring for someone, everything is saved
+        // to and read from the owner's account (see dataUid()). Firestore rules allow a
+        // scorekeeper to create/read/update the owner's (and the owner's paired
+        // partner's) sets and matches, but never delete them, exclude them from stats,
+        // edit profiles, or link partners. Removing a scorekeeper cuts all access.
+        // ============================================================
+        function inviteByEmail(email, what) {
+            const subject = 'Join me on Side or Serve';
+            const body = `Hi,\n\nI'd like to ${what} on Side or Serve, a beach volleyball analytics app.\n\n` +
+                `1) Go to https://sideorservevb.com and create an account with this email address (${email}).\n` +
+                `2) Tell me when you're in and I'll send the request again.\n\nThanks!`;
+            window.location.href = 'mailto:' + encodeURIComponent(email) + '?subject=' + encodeURIComponent(subject) + '&body=' + encodeURIComponent(body);
+        }
+
+        function escHtml(v) {
+            return String(v == null ? '' : v).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+        }
+
+        // ── Owner side ────────────────────────────────────────────────
+        async function loadScorekeepers() {
+            const container = document.getElementById('scorekeepersList');
+            if (!container || !currentUser || isActingAs()) return;
+            try {
+                const me = db.collection('players').doc(currentUser.uid);
+                const [linksSnap, sentSnap] = await Promise.all([
+                    me.collection('scorekeepers').get(),
+                    me.collection('scorekeeperInvitesSent').get()
+                ]);
+                const sentAll = sentSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+                const sentById = Object.fromEntries(sentAll.map(x => [x.id, x]));
+                // A scorekeeper's own name may not be known when they accept (no profile yet);
+                // fall back to what the owner entered when inviting.
+                const active = linksSnap.docs.map(d => {
+                    const a = { id: d.id, ...d.data() };
+                    return { ...a, name: a.name || sentById[a.id]?.name || '', email: a.email || sentById[a.id]?.email || '' };
+                });
+                const activeIds = new Set(active.map(a => a.id));
+                const pending = sentAll.filter(x => x.status === 'pending' && !activeIds.has(x.id));
+                if (!active.length && !pending.length) {
+                    container.innerHTML = '<p style="text-align: center; opacity: 0.7; padding: 12px 0; font-size: 0.9em;">No scorekeepers yet.</p>';
+                    return;
+                }
+                const row = (name, email, badge, buttonHtml) => `
+                    <div style="background: rgba(255,255,255,0.1); padding: 12px; border-radius: 8px; margin-bottom: 8px; display:flex; justify-content:space-between; align-items:center; gap:10px;">
+                        <div style="flex:1; min-width:0;">
+                            <div style="font-weight:bold;">${escHtml(name || email)}</div>
+                            <div style="font-size:0.85em; opacity:0.8; overflow-wrap:anywhere;">${escHtml(email || '')} ${badge}</div>
+                        </div>
+                        ${buttonHtml}
+                    </div>`;
+                const removeBtn = (fn, id) => `<button onclick="${fn}('${id}')" style="background:rgba(0,0,0,0.2); border:1px solid white; color:white; padding:5px 10px; border-radius:5px; cursor:pointer; font-size:0.85em; flex-shrink:0;">Remove</button>`;
+                container.innerHTML =
+                    active.map(a => row(a.name, a.email,
+                        a.viaOwner && a.viaOwner !== currentUser.uid
+                            ? '<span style="opacity:0.7;">• via your partner</span>'
+                            : '<span style="background: rgba(255,255,255,0.15); padding: 2px 8px; border-radius: 5px; font-size: 0.8em;">✓ Active</span>',
+                        removeBtn('removeScorekeeper', a.id))).join('') +
+                    pending.map(x => row(x.name, x.email,
+                        '<span style="background: rgba(0,0,0,0.3); border:1px solid rgba(255,255,255,0.3); padding: 2px 8px; border-radius: 5px; font-size: 0.8em;">Invitation sent</span>',
+                        removeBtn('cancelScorekeeperInvite', x.id))).join('');
+            } catch (error) {
+                console.error('[SCOREKEEPERS] Error loading:', error);
+            }
+        }
+
+        function showAddScorekeeperDialog() {
+            if (blockIfActingAs('invite scorekeepers')) return;
+            document.getElementById('addScorekeeperDialog').style.display = 'flex';
+            document.getElementById('scorekeeperSearchInput').value = '';
+            document.getElementById('scorekeeperSearchResults').style.display = 'none';
+        }
+
+        function closeAddScorekeeperDialog() {
+            document.getElementById('addScorekeeperDialog').style.display = 'none';
+        }
+
+        async function searchForScorekeeper() {
+            if (blockIfActingAs('invite scorekeepers')) return;
+            const email = document.getElementById('scorekeeperSearchInput').value.trim().toLowerCase();
+            const results = document.getElementById('scorekeeperSearchResults');
+            if (!email) { alert('Please enter an email address'); return; }
+            try {
+                const idToken = await currentUser.getIdToken();
+                const resp = await fetch('/.netlify/functions/find-partner', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + idToken },
+                    body: JSON.stringify({ email, purpose: 'scorekeeper' })
+                });
+                if (resp.status === 400) { alert('Please enter a valid email address'); return; }
+                if (!resp.ok) throw new Error('Lookup failed (' + resp.status + ')');
+                const { users } = await resp.json();
+                if (!users.length) {
+                    results.innerHTML = `
+                        <div style="text-align:center; padding:16px; background:rgba(255,255,255,0.1); border-radius:8px;">
+                            <div style="margin-bottom:6px;">No Side or Serve account found for<br><strong>${escHtml(email)}</strong></div>
+                            <div style="font-size:0.85em; opacity:0.8; margin-bottom:12px;">They need to create an account first. Send them an invitation, then come back and invite them here.</div>
+                            <button class="btn btn-primary" onclick="inviteByEmail('${escHtml(email)}', 'have you keep score for me')" style="padding:10px; width:100%;">✉️ Send invitation email</button>
+                        </div>`;
+                } else {
+                    results.innerHTML = users.map(u => `
+                        <div style="background: rgba(255,255,255,0.15); padding: 15px; border-radius: 8px; margin-top: 10px;">
+                            <div style="font-weight: bold; margin-bottom: 5px;">${escHtml(u.name)}</div>
+                            <div style="font-size: 0.9em; opacity: 0.8; margin-bottom: 10px;">${escHtml(u.email)}</div>
+                            <button class="btn btn-primary" data-uid="${escHtml(u.uid)}" data-name="${escHtml(u.name)}" data-email="${escHtml(u.email)}" onclick="sendScorekeeperInvite(this)" style="padding: 10px; width: 100%;">Invite as Scorekeeper</button>
+                        </div>`).join('');
+                }
+                results.style.display = 'block';
+            } catch (error) {
+                console.error('[SCOREKEEPERS] Search error:', error);
+                alert('Error searching. Please try again.');
+            }
+        }
+
+        async function sendScorekeeperInvite(btn) {
+            if (blockIfActingAs('invite scorekeepers')) return;
+            const skUid = btn.dataset.uid, skName = btn.dataset.name, skEmail = btn.dataset.email;
+            try {
+                btn.disabled = true; btn.textContent = 'Sending…';
+                const me = currentUser.uid;
+                const existing = await db.collection('players').doc(me).collection('scorekeepers').doc(skUid).get();
+                if (existing.exists) { alert('That person is already your scorekeeper.'); closeAddScorekeeperDialog(); return; }
+                await db.collection('players').doc(skUid).collection('scorekeeperInvites').doc(me).set({
+                    status: 'pending',
+                    ownerName: userProfile?.name || currentUser.email,
+                    ownerEmail: currentUser.email,
+                    createdAt: firebase.firestore.FieldValue.serverTimestamp()
+                });
+                await db.collection('players').doc(me).collection('scorekeeperInvitesSent').doc(skUid).set({
+                    status: 'pending', name: skName, email: skEmail,
+                    createdAt: firebase.firestore.FieldValue.serverTimestamp()
+                });
+                closeAddScorekeeperDialog();
+                loadScorekeepers();
+                alert('Invitation sent. They will see it the next time they open Side or Serve.');
+            } catch (error) {
+                console.error('[SCOREKEEPERS] Invite error:', error);
+                alert('Could not send the invitation. Please try again.');
+                btn.disabled = false; btn.textContent = 'Invite as Scorekeeper';
+            }
+        }
+
+        async function removeScorekeeper(skId) {
+            if (blockIfActingAs('remove scorekeepers')) return;
+            if (!confirm('Remove this scorekeeper? They will no longer be able to score matches or see stats for you.')) return;
+            try {
+                const me = currentUser.uid;
+                await db.collection('players').doc(me).collection('scorekeepers').doc(skId).delete();
+                await db.collection('players').doc(skId).collection('scorekeeperInvites').doc(me).delete().catch(() => {});
+                await db.collection('players').doc(me).collection('scorekeeperInvitesSent').doc(skId).delete().catch(() => {});
+                loadScorekeepers();
+            } catch (error) {
+                console.error('[SCOREKEEPERS] Remove error:', error);
+                alert('Could not remove the scorekeeper. Please try again.');
+            }
+        }
+
+        async function cancelScorekeeperInvite(skId) {
+            if (blockIfActingAs('cancel invitations')) return;
+            try {
+                const me = currentUser.uid;
+                await db.collection('players').doc(skId).collection('scorekeeperInvites').doc(me).delete().catch(() => {});
+                await db.collection('players').doc(me).collection('scorekeeperInvitesSent').doc(skId).delete();
+                loadScorekeepers();
+            } catch (error) {
+                console.error('[SCOREKEEPERS] Cancel error:', error);
+            }
+        }
+
+        // ── Scorekeeper side ──────────────────────────────────────────
+        async function getPendingScorekeeperInvites() {
+            const snap = await db.collection('players').doc(currentUser.uid)
+                .collection('scorekeeperInvites').where('status', '==', 'pending').get();
+            return snap.docs.map(d => ({ ownerId: d.id, ...d.data() }));
+        }
+
+        function pendingInviteRowHtml(inv, fromPaywall) {
+            return `
+                <div style="background: rgba(255,255,255,0.1); padding: 12px; border-radius: 8px; margin-bottom: 8px;">
+                    <div style="margin-bottom:8px;"><strong>${escHtml(inv.ownerName || inv.ownerEmail || 'A player')}</strong> invited you to keep score for them. It's free.</div>
+                    <div style="display:flex; gap:8px;">
+                        <button onclick="acceptScorekeeperInvite('${escHtml(inv.ownerId)}', ${fromPaywall ? 'true' : 'false'})" style="flex:1; padding:8px; border:none; border-radius:5px; background:white; color:#981E32; font-weight:bold; cursor:pointer;">Accept</button>
+                        <button onclick="declineScorekeeperInvite('${escHtml(inv.ownerId)}', ${fromPaywall ? 'true' : 'false'})" style="flex:1; padding:8px; border-radius:5px; background:rgba(0,0,0,0.2); border:1px solid white; color:white; cursor:pointer;">Decline</button>
+                    </div>
+                </div>`;
+        }
+
+        async function loadScorekeeperInvites() {
+            const card = document.getElementById('scorekeeperInvitesCard');
+            if (!card || !currentUser) return;
+            if (isActingAs()) { card.style.display = 'none'; return; }
+            try {
+                const invites = await getPendingScorekeeperInvites();
+                card.style.display = invites.length ? 'block' : 'none';
+                document.getElementById('scorekeeperInvitesList').innerHTML = invites.map(i => pendingInviteRowHtml(i, false)).join('');
+            } catch (error) {
+                console.error('[SCOREKEEPERS] Error loading invitations:', error);
+            }
+        }
+
+        async function loadPaywallInvites() {
+            const box = document.getElementById('paywallInvites');
+            if (!box || !currentUser) return;
+            try {
+                const invites = await getPendingScorekeeperInvites();
+                box.classList.toggle('hidden', !invites.length);
+                box.innerHTML = invites.map(i => pendingInviteRowHtml(i, true)).join('');
+            } catch (error) {
+                box.classList.add('hidden');
+            }
+        }
+
+        // Derived links let the scorekeeper also save into the owner's paired partner's
+        // account (the match is mirrored to the partner, as always). Re-synced each time
+        // the scorekeeper starts scoring for an owner, so a new partner is picked up.
+        async function syncDerivedScorekeeperLinks(ownerId) {
+            const me = currentUser.uid;
+            const partnersSnap = await db.collection('players').doc(ownerId).collection('partners').where('status', '==', 'paired').get();
+            for (const pd of partnersSnap.docs) {
+                const partnerId = pd.id;
+                const ref = db.collection('players').doc(partnerId).collection('scorekeepers').doc(me);
+                const existing = await ref.get();
+                if (existing.exists) continue;
+                await ref.set({
+                    viaOwner: ownerId,
+                    name: userProfile?.name || currentUser.displayName || currentUser.email || '',
+                    email: currentUser.email || '',
+                    createdAt: firebase.firestore.FieldValue.serverTimestamp()
+                });
+            }
+        }
+
+        async function acceptScorekeeperInvite(ownerId, fromPaywall) {
+            try {
+                const me = currentUser.uid;
+                await db.collection('players').doc(ownerId).collection('scorekeepers').doc(me).set({
+                    viaOwner: ownerId,
+                    name: userProfile?.name || currentUser.displayName || currentUser.email || '',
+                    email: currentUser.email || '',
+                    createdAt: firebase.firestore.FieldValue.serverTimestamp()
+                });
+                await db.collection('players').doc(me).collection('scorekeeperInvites').doc(ownerId)
+                    .update({ status: 'accepted', respondedAt: firebase.firestore.FieldValue.serverTimestamp() });
+                try { await syncDerivedScorekeeperLinks(ownerId); } catch (e) { console.warn('[SCOREKEEPERS] Partner link sync:', e); }
+                if (fromPaywall) await paywallRecheckAccess(); else showHomeScreen();
+            } catch (error) {
+                console.error('[SCOREKEEPERS] Accept error:', error);
+                alert('Could not accept the invitation. Please try again.');
+            }
+        }
+
+        async function declineScorekeeperInvite(ownerId, fromPaywall) {
+            try {
+                await db.collection('players').doc(currentUser.uid).collection('scorekeeperInvites').doc(ownerId)
+                    .update({ status: 'declined', respondedAt: firebase.firestore.FieldValue.serverTimestamp() });
+                if (fromPaywall) loadPaywallInvites(); else loadScorekeeperInvites();
+            } catch (error) {
+                console.error('[SCOREKEEPERS] Decline error:', error);
+            }
+        }
+
+        async function loadScoringFor() {
+            const card = document.getElementById('scoringForCard');
+            if (!card || !currentUser) return;
+            if (isActingAs()) { card.style.display = 'none'; return; }
+            try {
+                const snap = await db.collection('players').doc(currentUser.uid)
+                    .collection('scorekeeperInvites').where('status', '==', 'accepted').get();
+                const owners = [];
+                for (const d of snap.docs) {
+                    // Skip owners who have since removed this scorekeeper.
+                    const link = await db.collection('players').doc(d.id).collection('scorekeepers').doc(currentUser.uid).get();
+                    if (link.exists) owners.push({ ownerId: d.id, ...d.data() });
+                }
+                card.style.display = owners.length ? 'block' : 'none';
+                document.getElementById('scoringForList').innerHTML = owners.map(o => `
+                    <button class="btn btn-secondary" onclick="enterActingAs('${escHtml(o.ownerId)}')" style="margin-bottom:8px;">
+                        Score for ${escHtml(o.ownerName || o.ownerEmail || 'player')}
+                    </button>`).join('');
+            } catch (error) {
+                console.error('[SCOREKEEPERS] Error loading scoring-for list:', error);
+            }
+        }
+
+        function matchIsInProgress() {
+            return !!(matchState && matchState.servers && (matchState.ourScore > 0 || matchState.theirScore > 0 || matchScore.setsCompleted.length > 0));
+        }
+
+        function updateActingAsBanner() {
+            document.body.classList.toggle('acting-as', !!actingAs);
+            const banner = document.getElementById('actingAsBanner');
+            if (!banner) return;
+            if (actingAs) {
+                document.getElementById('actingAsName').textContent = actingAs.name || 'player';
+                banner.style.display = 'flex';
+            } else {
+                banner.style.display = 'none';
+            }
+        }
+
+        async function enterActingAs(ownerId) {
+            if (matchIsInProgress()) { alert('Finish or cancel the match in progress before switching accounts.'); return; }
+            try {
+                const ownerDoc = await db.collection('players').doc(ownerId).get();
+                if (!ownerDoc.exists) { alert('That player\'s account could not be found.'); return; }
+                try { await syncDerivedScorekeeperLinks(ownerId); } catch (e) { console.warn('[SCOREKEEPERS] Partner link sync:', e); }
+                actingAs = { uid: ownerId, name: ownerDoc.data().name || 'player' };
+                try { sessionStorage.setItem('sos_actingAs', JSON.stringify({ forUid: currentUser.uid, uid: ownerId, name: actingAs.name })); } catch (e) {}
+                userProfile = ownerDoc.data();
+                updateActingAsBanner();
+                showHomeScreen();
+            } catch (error) {
+                console.error('[SCOREKEEPERS] Could not start scoring for player:', error);
+                alert('You no longer have access to score for that player.');
+            }
+        }
+
+        async function exitActingAs() {
+            if (matchIsInProgress()) { alert('Finish or cancel the match in progress before switching back.'); return; }
+            try { sessionStorage.removeItem('sos_actingAs'); } catch (e) {}
+            actingAs = null;
+            try {
+                const own = await db.collection('players').doc(currentUser.uid).get();
+                if (own.exists) userProfile = own.data();
+            } catch (error) { console.error('[SCOREKEEPERS] Reloading own profile failed:', error); }
+            updateActingAsBanner();
+            showHomeScreen();
+        }
+
+        // After a page reload, resume scoring-for mode if the scorekeeper link still exists.
+        async function restoreActingAs() {
+            let saved = null;
+            try { saved = JSON.parse(sessionStorage.getItem('sos_actingAs') || 'null'); } catch (e) {}
+            if (!saved || saved.forUid !== currentUser.uid) return;
+            try {
+                const link = await db.collection('players').doc(saved.uid).collection('scorekeepers').doc(currentUser.uid).get();
+                const ownerDoc = link.exists ? await db.collection('players').doc(saved.uid).get() : null;
+                if (ownerDoc && ownerDoc.exists) {
+                    actingAs = { uid: saved.uid, name: ownerDoc.data().name || saved.name || 'player' };
+                    userProfile = ownerDoc.data();
+                } else {
+                    sessionStorage.removeItem('sos_actingAs');
+                }
+            } catch (e) {
+                try { sessionStorage.removeItem('sos_actingAs'); } catch (e2) {}
+            }
+        }
+
         async function clearAllHistory() {
+            if (blockIfActingAs('clear match history')) return;
             const userInput = prompt('Clear ALL match history and reset ALL stats to zero?\n\nType "CLEAR" to confirm:');
             
             if (userInput !== 'CLEAR') {
@@ -7589,7 +8023,7 @@
                         <div class="match-details">
                             ${match.venue} | vs ${match.opponent1Name || '?'} & ${match.opponent2Name || '?'}
                         </div>
-                        <button onclick="deleteMatch('${doc.id}', event)" style="position: absolute; top: 10px; right: 10px; background: #5E6A71; border: none; color: white; padding: 5px 10px; border-radius: 5px; cursor: pointer; font-size: 0.9em;">
+                        <button class="owner-only" onclick="deleteMatch('${doc.id}', event)" style="position: absolute; top: 10px; right: 10px; background: #5E6A71; border: none; color: white; padding: 5px 10px; border-radius: 5px; cursor: pointer; font-size: 0.9em;">
                             🗑️
                         </button>
                     </div>
@@ -8393,7 +8827,7 @@
             // Refresh profile from Firestore to get latest rpStats
             if (currentUser) {
                 try {
-                    const doc = await db.collection('players').doc(currentUser.uid).get();
+                    const doc = await db.collection('players').doc(dataUid()).get();
                     if (doc.exists) userProfile = doc.data();
                     // TEMP DIAGNOSTIC: All Time RP Averages reads userProfile.rpStats, not a
                     // live `sets` query — log the counts here to see if this refresh itself
@@ -8423,7 +8857,7 @@
 
                     // Query by userId — simple equality works with standard Firestore rules
                     const snap = await db.collection('sets')
-                        .where('userId', '==', currentUser.uid)
+                        .where('userId', '==', dataUid())
                         .limit(100).get();
 
                     // Track setIds already processed to avoid double-counting in-memory sets
@@ -8766,7 +9200,7 @@
                                 Your record — Receiving: ${rWins}/${rTotal}W (${rRecord}%) &nbsp;|&nbsp; Serving: ${sWins}/${sTotal}W (${sRecord}%)
                             </div>
                             ${sampleDisclaimer(totalSR)}
-                            <button onclick="confirmResetStats()" style="margin-top:8px;width:100%;padding:6px;background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.2);border-radius:6px;color:white;font-size:0.8em;cursor:pointer;">Reset All-Time Stats</button>
+                            <button class="owner-only" onclick="confirmResetStats()" style="margin-top:8px;width:100%;padding:6px;background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.2);border-radius:6px;color:white;font-size:0.8em;cursor:pointer;">Reset All-Time Stats</button>
                         </div>`;
                 }
             }
@@ -8927,7 +9361,7 @@
             if (!currentUser) return '';
             try {
                 const sswpSnap = await db.collection('sets')
-                    .where('userId', '==', currentUser.uid)
+                    .where('userId', '==', dataUid())
                     .limit(500).get();
 
                 // First Switch Win % — leader at the first side switch (7 total pts) →
@@ -9053,7 +9487,7 @@
             if (!currentUser) return '';
             try {
                 const sswp15Snap = await db.collection('sets')
-                    .where('userId', '==', currentUser.uid)
+                    .where('userId', '==', dataUid())
                     .limit(500).get();
 
                 // First Switch Win % — leader at the first side switch (5 total pts) →
@@ -9263,7 +9697,7 @@
 
                 // Query by userId — simple equality works with standard Firestore rules
                 const snapshot = await db.collection('sets')
-                    .where('userId', '==', currentUser.uid)
+                    .where('userId', '==', dataUid())
                     .limit(500).get();
                 _logSetsSnapshotDebug('buildSideAdvantageSection', snapshot);
 
@@ -9594,7 +10028,7 @@
                 const todayStart = new Date(); todayStart.setHours(0,0,0,0);
                 // Query by userId — simple equality works with standard Firestore rules
                 const snapshot = await db.collection('sets')
-                    .where('userId', '==', currentUser.uid)
+                    .where('userId', '==', dataUid())
                     .limit(500).get();
                 _logSetsSnapshotDebug('buildServerPerformanceSection', snapshot);
 
@@ -9824,7 +10258,7 @@
             try {
                 const todayStart = new Date(); todayStart.setHours(0,0,0,0);
                 const snapshot = await db.collection('sets')
-                    .where('userId', '==', currentUser.uid)
+                    .where('userId', '==', dataUid())
                     .limit(500).get();
 
                 // Group compass-direction point totals by venue — mixing venues
@@ -11112,6 +11546,7 @@
         }
         
         async function confirmResetStats() {
+            if (blockIfActingAs('reset stats')) return;
             if (!confirm('Reset ALL all-time stats (RPs, serve/receive wins)? This cannot be undone.')) return;
             try {
                 await db.collection('players').doc(currentUser.uid).update({
@@ -11645,7 +12080,7 @@
 
                 if (currentUser) {
                     const snapshot = await db.collection('sets')
-                        .where('userId', '==', currentUser.uid)
+                        .where('userId', '==', dataUid())
                         .limit(500).get();
 
                     snapshot.docs.forEach(doc => {
@@ -11726,7 +12161,7 @@
                 };
 
                 const snapshot = await db.collection('sets')
-                    .where('userId', '==', currentUser.uid)
+                    .where('userId', '==', dataUid())
                     .limit(500).get();
 
                 snapshot.docs.forEach(doc => {
@@ -11822,7 +12257,7 @@
 
                 if (currentUser) {
                     const snapshot = await db.collection('sets')
-                        .where('userId', '==', currentUser.uid)
+                        .where('userId', '==', dataUid())
                         .limit(500).get();
 
                     snapshot.docs.forEach(doc => {
@@ -12158,6 +12593,7 @@
 
         // Show add partner dialog
         function showAddPartnerDialog() {
+            if (blockIfActingAs('add partners')) return;
             document.getElementById('addPartnerDialog').style.display = 'flex';
             document.getElementById('partnerSearchInput').value = '';
             document.getElementById('partnerSearchResults').style.display = 'none';
@@ -12192,8 +12628,10 @@
 
                 if (!users.length) {
                     document.getElementById('partnerSearchResults').innerHTML = `
-                        <div style="text-align: center; padding: 20px; opacity: 0.7;">
-                            No users found with that email.
+                        <div style="text-align:center; padding:16px; background:rgba(255,255,255,0.1); border-radius:8px;">
+                            <div style="margin-bottom:6px;">No Side or Serve account found for<br><strong>${escHtml(searchInput)}</strong></div>
+                            <div style="font-size:0.85em; opacity:0.8; margin-bottom:12px;">Your partner needs an account with an active subscription to share match data. Send them an invitation, then search again once they've signed up.</div>
+                            <button class="btn btn-primary" onclick="inviteByEmail('${escHtml(searchInput)}', 'link up as playing partners')" style="padding:10px; width:100%;">✉️ Send invitation email</button>
                         </div>
                     `;
                     document.getElementById('partnerSearchResults').style.display = 'block';
@@ -12211,9 +12649,13 @@
                         <div style="background: rgba(255,255,255,0.15); padding: 15px; border-radius: 8px; margin-top: 10px;">
                             <div style="font-weight: bold; margin-bottom: 5px;">${user.name || 'User'}</div>
                             <div style="font-size: 0.9em; opacity: 0.8; margin-bottom: 10px;">${user.email}</div>
-                            <button class="btn btn-primary" onclick="sendPartnerRequest('${userId}', '${user.name}', '${user.email}')" style="padding: 10px; width: 100%;">
-                                Send Partner Request
-                            </button>
+                            ${found.hasAccess
+                                ? `<div style="font-size:0.85em; margin-bottom:10px;">✓ Active subscriber</div>
+                                   <button class="btn btn-primary" onclick="sendPartnerRequest('${userId}', '${user.name}', '${user.email}')" style="padding: 10px; width: 100%;">
+                                       Send Partner Request
+                                   </button>`
+                                : `<div style="font-size:0.85em; opacity:0.85; margin-bottom:10px;">They have an account but no active subscription yet. A partner needs one to share match data — ask them to subscribe, then search again.</div>
+                                   <button class="btn btn-secondary" disabled style="padding: 10px; width: 100%; opacity:0.5; cursor:not-allowed;">Send Partner Request</button>`}
                         </div>
                     `;
                 }
@@ -12229,6 +12671,7 @@
 
         // Send partner request
         async function sendPartnerRequest(partnerId, partnerName, partnerEmail) {
+            if (blockIfActingAs('send partner requests')) return;
             try {
                 console.log('[PARTNERS] Sending request to:', partnerId);
                 
@@ -12412,7 +12855,7 @@
             
             try {
                 const partnersSnapshot = await db.collection('players')
-                    .doc(currentUser.uid)
+                    .doc(dataUid())
                     .collection('partners')
                     .where('status', '==', 'paired')
                     .get();
@@ -12868,7 +13311,8 @@
         <div style="background: #981E32; padding: 30px; border-radius: 20px; max-width: 500px; width: 90%; max-height: 80vh; overflow-y: auto; box-shadow: 0 8px 32px rgba(0,0,0,0.5);">
             <h2 style="margin-top: 0;">🤝 Add Playing Partner</h2>
             
-            <p style="margin-bottom: 20px; opacity: 0.9;">Search for your regular playing partner by email.</p>
+            <p style="margin-bottom: 8px; opacity: 0.9;">Search for your regular playing partner by email.</p>
+            <p style="margin-bottom: 20px; opacity: 0.8; font-size: 0.9em;">Your partner needs their own Side or Serve account with an active subscription to share match data. If they don't have an account yet, you can send them an invitation.</p>
             
             <div class="form-group">
                 <label>Partner's Email:</label>
@@ -12882,6 +13326,23 @@
             <div style="display: flex; gap: 10px; margin-top: 20px;">
                 <button class="btn btn-secondary" onclick="closeAddPartnerDialog()" style="flex: 1;">Cancel</button>
                 <button class="btn btn-primary" onclick="searchForPartner()" style="flex: 1;">Search</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Invite Scorekeeper Dialog -->
+    <div id="addScorekeeperDialog" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.8); justify-content: center; align-items: center; z-index: 2000;">
+        <div style="background: #981E32; padding: 30px; border-radius: 20px; max-width: 500px; width: 90%; max-height: 80vh; overflow-y: auto; box-shadow: 0 8px 32px rgba(0,0,0,0.5);">
+            <h2 style="margin-top: 0;">📝 Invite a Scorekeeper</h2>
+            <p style="margin-bottom: 20px; opacity: 0.9;">Enter the email they use for Side or Serve. They'll score matches for you and your partner and see your stats. They can't delete anything.</p>
+            <div class="form-group">
+                <label>Scorekeeper's Email:</label>
+                <input type="email" id="scorekeeperSearchInput" placeholder="scorekeeper@example.com" style="width: 100%;">
+            </div>
+            <div id="scorekeeperSearchResults" style="display: none; margin: 20px 0;"></div>
+            <div style="display: flex; gap: 10px; margin-top: 20px;">
+                <button class="btn btn-secondary" onclick="closeAddScorekeeperDialog()" style="flex: 1;">Cancel</button>
+                <button class="btn btn-primary" onclick="searchForScorekeeper()" style="flex: 1;">Search</button>
             </div>
         </div>
     </div>

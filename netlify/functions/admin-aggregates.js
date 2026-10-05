@@ -64,7 +64,9 @@ function computeAggregates(sets) {
     for (let k = 1; k <= segs.length; k++) {
       const s = segs[k - 1];
       const total = (s.ourPoints || 0) + (s.theirPoints || 0);
-      if (total !== interval) break;              // partial/final segment — not a real switch
+      // The last segment of a set is flagged isPartial even when it happens to hold a
+      // full 7 (or 5) points; the set ended there, so no switch followed. Not a switch.
+      if (s.isPartial || total !== interval) break;
       our += s.ourPoints || 0;
       their += s.theirPoints || 0;
       const bucket = (table[type][k] = table[type][k] || {});
