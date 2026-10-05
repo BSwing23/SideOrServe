@@ -91,7 +91,7 @@ exports.handler = async (event) => {
   const sig = headers["x-signature"] || headers["X-Signature"];
 
   if (!signatureValid(rawBody, sig, process.env.LEMONSQUEEZY_WEBHOOK_SECRET)) {
-    return { statusCode: 401, body: "Invalid signature" };
+    return { statusCode: 401, body: "Invalid signature" + " [TEMP-DIAG secretLen=" + (process.env.LEMONSQUEEZY_WEBHOOK_SECRET || "").length + " bodyLen=" + rawBody.length + " sigLen=" + String(sig || "").length + " b64=" + !!event.isBase64Encoded + "]" };
   }
 
   let payload;
