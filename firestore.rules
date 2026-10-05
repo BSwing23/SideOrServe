@@ -136,6 +136,24 @@ service cloud.firestore {
                           || request.auth.uid in resource.data.owners);
     }
 
+    // — Live board ————————————————————
+    // One doc per venue court (liveBoard/{venueId}__{court}), overwritten by the next
+    // match on that court. Public read (names and scores a scorer chose to share);
+    // only signed-in scorers write, and only to their own entry — or to a court entry
+    // that has gone stale (no update in 2 hours), so the next scorer can take it over.
+    match /liveBoard/{boardId} {
+      allow read: if true;
+      allow create: if request.auth != null
+                    && request.resource.data.publisherUid == request.auth.uid
+                    && boardId.matches(request.resource.data.venueId + '__.*');
+      allow update: if request.auth != null
+                    && request.resource.data.publisherUid == request.auth.uid
+                    && boardId.matches(request.resource.data.venueId + '__.*')
+                    && (resource.data.publisherUid == request.auth.uid
+                        || resource.data.updatedAt < request.time - duration.value(2, 'h'));
+      allow delete: if request.auth != null && resource.data.publisherUid == request.auth.uid;
+    }
+
     // — Subscription status (Lemon Squeezy) ————————————————————
     // Users can read only their own record; only the webhook can write it.
     match /subscribers/{uid} {

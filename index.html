@@ -707,6 +707,9 @@
                     🏐<br>Past Matches
                 </button>
             </div>
+            <button class="btn btn-secondary btn-small" onclick="openLiveBoard()" style="width:100%; margin-bottom: 15px; padding: 12px; font-size: 0.9em;">
+                📺 Live Board — all courts at a venue
+            </button>
         </div>
         
         <button class="btn btn-primary menu-btn" onclick="showMatchSetup()">New Match</button>
@@ -804,6 +807,17 @@
             </select>
         </div>
         
+        <div class="form-group">
+            <label for="courtNumber">Court (optional):</label>
+            <input type="text" id="courtNumber" placeholder="e.g. 3" maxlength="10" autocomplete="off"
+                style="width:100%;padding:12px;border-radius:10px;border:none;font-size:1em;background:rgba(255,255,255,0.9);color:#333;">
+            <label style="display:flex; align-items:center; gap:8px; margin-top:10px; cursor:pointer; font-weight:normal;">
+                <input type="checkbox" id="broadcastToggle" style="width:18px; height:18px; cursor:pointer;" onchange="try{localStorage.setItem('sos_broadcast', this.checked ? '1' : '0')}catch(e){}">
+                📺 Show this match on the venue's live board
+            </label>
+            <div style="font-size:0.78em; opacity:0.6; margin-top:4px;">Shares only player names and scores, live. Built-in venues only.</div>
+        </div>
+
         <div class="form-group">
             <label for="courtOrientation">Court Orientation:</label>
             <button class="btn btn-secondary btn-small" onclick="showCompass()" style="margin-bottom: 10px;">
@@ -1365,6 +1379,21 @@
         <button class="btn btn-secondary" onclick="showHomeScreen()" style="margin-top:16px;">Back to Home</button>
     </div>
 
+    <!-- Live Board (public, no login): every court being scored at a venue + on-air numbers -->
+    <div id="boardScreen" class="container hidden" style="max-width:1100px;">
+        <div style="display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap; margin-bottom:6px;">
+            <h1 style="margin:0; text-align:left;">📺 <span id="boardVenueName">Live Board</span></h1>
+            <div id="boardStatus" style="font-size:0.8em; opacity:0.7;">Connecting…</div>
+        </div>
+        <select id="boardVenueSelect" onchange="boardSetVenue(this.value)" style="width:100%; max-width:420px; padding:8px 10px; border-radius:6px; background:rgba(255,255,255,0.10); color:white; border:1px solid rgba(255,255,255,0.25); font-size:0.9em; margin:6px 0 14px;"></select>
+        <div id="boardCards"></div>
+
+        <h2 style="margin:24px 0 6px;">🎙️ On-Air Numbers</h2>
+        <div style="font-size:0.8em; opacity:0.65; margin-bottom:10px;">Anonymous totals from every completed set scored here. Small samples are flagged.</div>
+        <div id="boardWindowButtons" style="display:flex; gap:5px; margin-bottom:12px;"></div>
+        <div id="boardInsights"><p style="opacity:0.7;">Loading…</p></div>
+    </div>
+
     <!-- Team Roster Screen (Admin Only) -->
     <div id="rosterScreen" class="container hidden">
         <h1><img src="logo.png" style="width: 32px; height: 32px; vertical-align: middle; margin-right: 8px;">Team Roster</h1>
@@ -1419,6 +1448,10 @@
         // Admin gate — manual overrides for the primary account only
         const ADMIN_EMAIL = 'brian.scott.swingle@gmail.com';
         function isAdmin() { return !!(currentUser && currentUser.email?.toLowerCase() === ADMIN_EMAIL.toLowerCase()); }
+
+        // Live Board mode: index.html?board=<venueId> is a public, login-free page.
+        const BOARD_MODE = new URLSearchParams(location.search).has('board');
+        const BOARD_VENUE_PARAM = new URLSearchParams(location.search).get('board') || '';
 
         // Scorekeeper mode: a scorekeeper "acts as" the player who invited them. While
         // actingAs is set, userProfile holds THAT player's profile and every data read/
@@ -2108,6 +2141,7 @@
 
         // Auth State Management
         auth.onAuthStateChanged(async (user) => {
+            if (BOARD_MODE) return; // public live board — no login, no app flow
             hideAllScreens();
             if (user) {
                 currentUser = user;
@@ -2151,6 +2185,7 @@
             document.getElementById('commandCenterScreen').classList.add('hidden');
             document.getElementById('rosterScreen').classList.add('hidden');
             document.getElementById('insightsScreen').classList.add('hidden');
+            document.getElementById('boardScreen').classList.add('hidden');
             document.getElementById('paywallScreen').classList.add('hidden');
         }
 
@@ -2817,6 +2852,9 @@
             // Show admin-only blocks only for the primary account
             const _adminSec = document.getElementById('adminOverrideBlocks');
             if (_adminSec) _adminSec.style.display = isAdmin() ? '' : 'none';
+            // Live board opt-in is remembered per device (one tick on each scoring iPad).
+            const _bt = document.getElementById('broadcastToggle');
+            if (_bt) { try { _bt.checked = localStorage.getItem('sos_broadcast') === '1'; } catch (e) {} }
             // Scorekeepers name Player 1 for each match (prefilled with the account owner's name).
             const _actingBlock = document.getElementById('actingPlayerBlock');
             if (_actingBlock) {
@@ -4042,6 +4080,10 @@
             matchSetup.partnerName = partnerName;
             matchSetup.opponent1Name = opp1Name;
             matchSetup.opponent2Name = opp2Name;
+
+            // Live board opt-in (built-in venues only — custom venue ids aren't global)
+            matchSetup.court = (document.getElementById('courtNumber')?.value || '').replace(/[^A-Za-z0-9 \-]/g, '').trim().slice(0, 10);
+            matchSetup.broadcast = !!(document.getElementById('broadcastToggle')?.checked && venues[matchSetup.venue]);
             
             // Save names for autocomplete in future matches
             if (yourName) {
@@ -4642,6 +4684,7 @@
         }
         
         function updateMatchDisplay() {
+            scheduleBoardPublish(false);
             document.getElementById('ourGameScore').textContent = matchState.ourScore;
             document.getElementById('theirGameScore').textContent = matchState.theirScore;
             document.getElementById('ourRealPoints').textContent = matchState.ourRealPoints;
@@ -4942,6 +4985,7 @@
                     matchSetup: JSON.parse(JSON.stringify(matchSetup))
                 };
                 matchScore.setsCompleted.push(setData);
+                scheduleBoardPublish(true);
                 // Only clear currentSetId if there's a next set coming. When this was the
                 // deciding set, handleMatchComplete()'s final saveMatchToFirestore(true) call
                 // needs currentSetId intact so saveSetToFirestore() updates this same set
@@ -4977,6 +5021,7 @@
         }
         
         async function handleMatchComplete() {
+            publishBoard(true);
             const matchWinner = matchScore.yourSetsWon > matchScore.theirSetsWon ? 'YOU' : 'THEM';
             const finalScore = `${matchScore.yourSetsWon}-${matchScore.theirSetsWon}`;
             
@@ -6623,6 +6668,7 @@
 
         function cancelMatch() {
             if (confirm('Cancel match? All data will be lost.')) {
+                removeBoardEntry();
                 selectedPairedPartner = null;  // Reset partner selection
                 showHomeScreen();
             }
@@ -7599,6 +7645,244 @@
                 ${sw.tied ? `<div style="font-size:0.8em; opacity:0.6; margin-top:10px;">${sw.tied} set${sw.tied === 1 ? '' : 's'} were tied here (no leader, not counted above).</div>` : ''}
             </div>`;
             content.innerHTML = html;
+        }
+
+        // ============================================================
+        // LIVE BOARD
+        // Scorers opt in per match; only names and scores are published, to a
+        // per-court doc (liveBoard/{venueId}__{court}) that is overwritten by the next
+        // match on that court, so the collection stays tiny. The board page
+        // (index.html?board=<venueId>) is public and needs no login.
+        // ============================================================
+        let _boardPublishTimer = null;
+
+        function boardLastName(n) { return String(n || '').trim().split(/\s+/).pop() || ''; }
+
+        function boardDocId() {
+            const court = (matchSetup.court || '').trim();
+            return matchSetup.venue + '__' + (court || ('u' + currentUser.uid.slice(0, 6)));
+        }
+
+        function scheduleBoardPublish(immediate) {
+            if (BOARD_MODE || !matchSetup || !matchSetup.broadcast || !currentUser || !matchState) return;
+            clearTimeout(_boardPublishTimer);
+            _boardPublishTimer = setTimeout(() => publishBoard(false), immediate ? 0 : 1200);
+        }
+
+        async function publishBoard(isFinal) {
+            if (!matchSetup.broadcast || !currentUser || !venues[matchSetup.venue]) return;
+            try {
+                const t1 = boardLastName(matchSetup.yourName) + '/' + boardLastName(matchSetup.partnerName);
+                const t2 = boardLastName(matchSetup.opponent1Name) + '/' + boardLastName(matchSetup.opponent2Name);
+                await db.collection('liveBoard').doc(boardDocId()).set({
+                    venueId: matchSetup.venue,
+                    venueName: venues[matchSetup.venue].name,
+                    court: (matchSetup.court || '').trim(),
+                    team1: t1, team2: t2,
+                    team1Players: [matchSetup.yourName || '', matchSetup.partnerName || ''],
+                    team2Players: [matchSetup.opponent1Name || '', matchSetup.opponent2Name || ''],
+                    score1: matchState.ourScore || 0,
+                    score2: matchState.theirScore || 0,
+                    maxPoints: matchState.maxPoints || 21,
+                    setNumber: matchScore.currentSetNumber || 1,
+                    setActive: matchState.setActive !== false,
+                    sets: (matchScore.setsCompleted || []).map(x => ({
+                        n: x.setNumber,
+                        a: x.matchState?.ourScore ?? null,
+                        b: x.matchState?.theirScore ?? null
+                    })),
+                    setsWon1: matchScore.yourSetsWon || 0,
+                    setsWon2: matchScore.theirSetsWon || 0,
+                    serving: matchState.servingTeam === 'our' ? 1 : (matchState.servingTeam === 'their' ? 2 : 0),
+                    status: isFinal ? 'final' : 'live',
+                    publisherUid: currentUser.uid,
+                    updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+                });
+            } catch (error) {
+                console.warn('[BOARD] Publish failed (never blocks scoring):', error.message);
+            }
+        }
+
+        async function removeBoardEntry() {
+            clearTimeout(_boardPublishTimer);
+            if (!matchSetup?.broadcast || !currentUser) return;
+            try { await db.collection('liveBoard').doc(boardDocId()).delete(); } catch (e) {}
+        }
+
+        function openLiveBoard() {
+            let venueId = 'bear-down-beach';
+            try { venueId = localStorage.getItem('gasaBeach_lastVenue') || venueId; } catch (e) {}
+            if (!venues[venueId]) venueId = 'bear-down-beach';
+            window.open(location.origin + '/?board=' + encodeURIComponent(venueId), '_blank');
+        }
+
+        // ── Board page ────────────────────────────────────────────────
+        let _boardUnsub = null;
+        let _boardDocs = {};
+        let _boardVenue = null;
+        let _boardWindow = 'today';
+        let _boardTick = null;
+        let _boardLastSnap = 0;
+
+        function startBoardMode() {
+            hideAllScreens();
+            document.getElementById('boardScreen').classList.remove('hidden');
+            const sel = document.getElementById('boardVenueSelect');
+            sel.innerHTML = getVenueEntriesForDropdown().filter(([, v]) => !v.isTestVenue || BOARD_VENUE_PARAM === 'test-beach')
+                .map(([k, v]) => `<option value="${k}">${escHtml(v.name)}</option>`).join('');
+            const start = venues[BOARD_VENUE_PARAM] ? BOARD_VENUE_PARAM : 'bear-down-beach';
+            sel.value = start;
+            renderBoardWindowButtons();
+            boardSetVenue(start);
+            clearInterval(_boardTick);
+            _boardTick = setInterval(() => { renderBoardCards(); updateBoardStatus(); }, 15000);
+            setInterval(() => { if (_boardVenue) loadBoardInsights(); }, 60000);
+        }
+
+        function boardSetVenue(venueId) {
+            _boardVenue = venueId;
+            document.getElementById('boardVenueName').textContent = venues[venueId]?.name || 'Live Board';
+            try { history.replaceState(null, '', '?board=' + encodeURIComponent(venueId)); } catch (e) {}
+            if (_boardUnsub) { _boardUnsub(); _boardUnsub = null; }
+            _boardDocs = {};
+            renderBoardCards();
+            _boardUnsub = db.collection('liveBoard').where('venueId', '==', venueId).onSnapshot(snap => {
+                _boardDocs = {};
+                snap.docs.forEach(d => { _boardDocs[d.id] = d.data(); });
+                _boardLastSnap = Date.now();
+                renderBoardCards();
+                updateBoardStatus();
+            }, err => {
+                console.error('[BOARD] Listener error:', err);
+                document.getElementById('boardStatus').textContent = 'Connection problem — retrying';
+            });
+            loadBoardInsights();
+        }
+
+        function updateBoardStatus() {
+            const el = document.getElementById('boardStatus');
+            if (!el || !_boardLastSnap) return;
+            const secs = Math.round((Date.now() - _boardLastSnap) / 1000);
+            el.textContent = 'Live · updates automatically';
+        }
+
+        function renderBoardCards() {
+            const box = document.getElementById('boardCards');
+            if (!box) return;
+            const now = Date.now();
+            const rows = Object.entries(_boardDocs).map(([id, d]) => {
+                const ms = d.updatedAt?.toMillis ? d.updatedAt.toMillis() : now; // pending write counts as now
+                return { id, d, age: now - ms };
+            }).filter(r => r.d.status === 'final' ? r.age < 45 * 60000 : r.age < 3 * 3600000);
+            rows.sort((a, b) => String(a.d.court).localeCompare(String(b.d.court), undefined, { numeric: true }) || a.age - b.age);
+            if (!rows.length) {
+                box.innerHTML = '<div style="text-align:center; opacity:0.7; padding:30px 10px; border:1px dashed rgba(255,255,255,0.25); border-radius:10px;">No matches on the board right now.<br><span style="font-size:0.85em;">Scorers show a match here with the "Show this match on the venue\'s live board" checkbox.</span></div>';
+                return;
+            }
+            const card = ({ d, age }) => {
+                const final = d.status === 'final';
+                const stale = !final && age > 10 * 60000;
+                const between = !final && d.setActive === false;
+                const badge = final ? 'FINAL' : (between ? 'BETWEEN SETS' : (stale ? 'NO RECENT UPDATE' : 'LIVE'));
+                const badgeStyle = (!final && !stale && !between) ? 'background:#981E32;color:white;' : 'background:rgba(255,255,255,0.12);color:rgba(255,255,255,0.8);';
+                const dot = n => d.serving === n ? '<span style="color:#fff;margin-right:6px;">●</span>' : '<span style="display:inline-block;width:1.1em;"></span>';
+                const done = (d.sets || []).map(x => `Set ${x.n}: ${x.a ?? '–'}–${x.b ?? '–'}`).join(' · ');
+                const leading1 = d.score1 > d.score2, leading2 = d.score2 > d.score1;
+                const row = (n, name, players, score, lead) => `
+                    <div style="display:flex; justify-content:space-between; align-items:center; padding:8px 0; ${n === 1 ? 'border-bottom:1px solid rgba(255,255,255,0.12);' : ''}">
+                        <div style="min-width:0;">
+                            <div style="font-size:1.25em; font-weight:${lead ? '800' : '600'}; ${lead ? '' : 'opacity:0.85;'}">${dot(n)}${escHtml(name)}</div>
+                            <div style="font-size:0.78em; opacity:0.6; margin-left:1.5em;">${escHtml((players || []).filter(Boolean).join(' & '))}</div>
+                        </div>
+                        <div style="font-size:2.6em; font-weight:900; line-height:1; ${lead ? '' : 'opacity:0.75;'}">${score}</div>
+                    </div>`;
+                return `
+                    <div style="background:rgba(255,255,255,0.07); border:1px solid rgba(255,255,255,0.15); border-radius:12px; padding:14px 16px; ${stale ? 'opacity:0.65;' : ''}">
+                        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+                            <div style="font-size:1.05em; font-weight:800; letter-spacing:0.04em;">${d.court ? 'COURT ' + escHtml(d.court) : 'MATCH'}</div>
+                            <div style="font-size:0.7em; font-weight:800; letter-spacing:0.08em; padding:3px 9px; border-radius:20px; ${badgeStyle}">${badge}</div>
+                        </div>
+                        ${row(1, d.team1, d.team1Players, d.score1, leading1)}
+                        ${row(2, d.team2, d.team2Players, d.score2, leading2)}
+                        <div style="font-size:0.82em; opacity:0.75; margin-top:8px;">
+                            Set ${d.setNumber} to ${d.maxPoints} · Sets ${d.setsWon1}–${d.setsWon2}${done ? '<br>' + escHtml(done) : ''}
+                        </div>
+                    </div>`;
+            };
+            box.innerHTML = `<div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(300px, 1fr)); gap:12px;">${rows.map(card).join('')}</div>`;
+        }
+
+        // ── On-air numbers ────────────────────────────────────────────
+        const BOARD_WINDOWS = [['today', 'Today'], ['3d', 'Last 3 days'], ['all', 'All time']];
+
+        function boardWindowSince() {
+            if (_boardWindow === 'all') return 0;
+            if (_boardWindow === '3d') return Date.now() - 72 * 3600000;
+            const d = new Date(); d.setHours(0, 0, 0, 0); return d.getTime();
+        }
+
+        function renderBoardWindowButtons() {
+            document.getElementById('boardWindowButtons').innerHTML = BOARD_WINDOWS.map(([k, label]) => {
+                const a = k === _boardWindow;
+                return `<button onclick="setBoardWindow('${k}')" style="flex:1; max-width:140px; padding:6px 0; border-radius:6px; border:1px solid ${a ? 'rgba(255,255,255,0.3)' : 'rgba(255,255,255,0.15)'}; cursor:pointer; font-size:0.85em; font-weight:bold; background:${a ? 'rgba(255,255,255,0.18)' : 'rgba(255,255,255,0.06)'}; color:${a ? 'white' : 'rgba(255,255,255,0.5)'};">${label}</button>`;
+            }).join('');
+        }
+
+        function setBoardWindow(k) { _boardWindow = k; renderBoardWindowButtons(); loadBoardInsights(); }
+
+        async function loadBoardInsights() {
+            const box = document.getElementById('boardInsights');
+            if (!box || !_boardVenue) return;
+            try {
+                const resp = await fetch('/.netlify/functions/venue-insights?venue=' + encodeURIComponent(_boardVenue) + '&since=' + boardWindowSince());
+                if (!resp.ok) throw new Error('HTTP ' + resp.status);
+                renderBoardInsights(await resp.json());
+            } catch (error) {
+                console.error('[BOARD] Insights error:', error);
+                box.innerHTML = '<p style="opacity:0.7;">Numbers are unavailable right now.</p>';
+            }
+        }
+
+        function renderBoardInsights(r) {
+            const box = document.getElementById('boardInsights');
+            const thin = n => n < 10 ? ' <span style="opacity:0.6; font-size:0.8em;">(small sample)</span>' : '';
+            const tile = (title, big, sub) => `
+                <div style="background:rgba(255,255,255,0.07); border:1px solid rgba(255,255,255,0.15); border-radius:10px; padding:12px 14px;">
+                    <div style="font-size:0.72em; letter-spacing:0.07em; opacity:0.6; text-transform:uppercase;">${title}</div>
+                    <div style="font-size:1.5em; font-weight:800; margin:4px 0;">${big}</div>
+                    <div style="font-size:0.82em; opacity:0.75;">${sub}</div>
+                </div>`;
+            if (!r.sets) {
+                box.innerHTML = '<p style="opacity:0.7;">No completed sets in this window yet.</p>';
+                return;
+            }
+            const tiles = [];
+            (r.sides || []).forEach(s => {
+                const [a, b] = s.pair;
+                tiles.push(tile(`${a} vs ${b} side`,
+                    `${s.leader} +${s.edge.toFixed(1)}`,
+                    `${a} ${s.shares[a].toFixed(1)}% · ${b} ${s.shares[b].toFixed(1)}% of points (${s.n} segments)${thin(s.n)}`));
+            });
+            if (r.serveFirst && r.serveFirst.n) tiles.push(tile('Serving first', `${r.serveFirst.pct.toFixed(0)}%`, `of sets won by the team that served first (${r.serveFirst.won} of ${r.serveFirst.n})${thin(r.serveFirst.n)}`));
+            if (r.firstSwitch && r.firstSwitch.n) tiles.push(tile('Leading at the first switch', `${r.firstSwitch.pct.toFixed(0)}%`, `of sets won by the team ahead at the first switch (${r.firstSwitch.leaderWon} of ${r.firstSwitch.n})${thin(r.firstSwitch.n)}`));
+            if (r.avgPoints['21'] != null) tiles.push(tile('Average 21-point set', `${r.avgPoints['21'].toFixed(1)} pts`, `${r.avgPoints.n21} sets${thin(r.avgPoints.n21)}`));
+            if (r.avgPoints['15'] != null) tiles.push(tile('Average 15-point set', `${r.avgPoints['15'].toFixed(1)} pts`, `${r.avgPoints.n15} sets${thin(r.avgPoints.n15)}`));
+            if (r.closeSets && r.closeSets.n) tiles.push(tile('Close sets', `${r.closeSets.pct.toFixed(0)}%`, `decided by 2 points or fewer (${r.closeSets.within2} of ${r.closeSets.n})${thin(r.closeSets.n)}`));
+
+            const lines = [];
+            (r.sides || []).forEach(s => {
+                lines.push(`The ${s.leader} side is scoring ${s.edge.toFixed(1)}% more (${s.shares[s.leader].toFixed(1)}% of points vs ${s.shares[s.pair.find(x => x !== s.leader)].toFixed(1)}%)${s.n < 10 ? ' — small sample' : ''}.`);
+            });
+            if (r.serveFirst && r.serveFirst.n) lines.push(`The team that served first has won ${r.serveFirst.pct.toFixed(0)}% of sets (${r.serveFirst.won} of ${r.serveFirst.n}).`);
+            if (r.firstSwitch && r.firstSwitch.n) lines.push(`The team ahead at the first switch has gone on to win ${r.firstSwitch.pct.toFixed(0)}% of the time (${r.firstSwitch.leaderWon} of ${r.firstSwitch.n}).`);
+
+            box.innerHTML = `
+                <div style="font-size:0.85em; opacity:0.75; margin-bottom:10px;">${r.sets} completed sets from ${r.matches} matches</div>
+                <div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(260px, 1fr)); gap:10px; margin-bottom:14px;">${tiles.join('')}</div>
+                ${lines.length ? `<div style="background:rgba(255,255,255,0.06); border-left:3px solid #981E32; border-radius:6px; padding:12px 14px;">
+                    <div style="font-size:0.72em; letter-spacing:0.07em; opacity:0.6; text-transform:uppercase; margin-bottom:6px;">Say it on air</div>
+                    ${lines.map(l => `<div style="margin:5px 0;">${escHtml(l)}</div>`).join('')}
+                </div>` : ''}`;
         }
 
         // ============================================================
@@ -13324,6 +13608,9 @@
 
         // Expose to DevTools console — not referenced anywhere in production UI
         window.runSoSSimulation = runSoSSimulation;
+
+        // Public live board (?board=<venueId>): runs after everything above is defined.
+        if (BOARD_MODE) startBoardMode();
 
     </script>
 
