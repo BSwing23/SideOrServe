@@ -1359,7 +1359,7 @@
         // Lemon Squeezy product + webhook are live. Free access: admin, verified
         // emails on FREE_ACCESS_DOMAINS, or a subscribers/{uid} doc with comp:true.
         const FREE_ACCESS_DOMAINS = ['arizona.edu', 'lmu.edu', 'stanford.edu'];
-        const LS_CHECKOUT_URL = '';
+        const LS_CHECKOUT_URL = 'https://gasavb.lemonsqueezy.com/checkout/buy/18654dd3-aa6c-4107-a4ac-cf3b0b341f0e';
         const SUBSCRIPTION_GATE_ON = !!LS_CHECKOUT_URL;
         function hasFreeAccess() {
             if (!currentUser || !currentUser.emailVerified || !currentUser.email) return false;
