@@ -2,32 +2,88 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
+    // — Scorekeeper helpers ————————————————————
+    // A scorekeeper is linked to an owner by a doc at players/{owner}/scorekeepers/{scorekeeper}
+    // (created by the scorekeeper after accepting the owner's invitation). For the
+    // owner's paired partner the scorekeeper holds a second, derived link whose
+    // viaOwner points back at the inviting owner; it only counts while the
+    // inviting owner's own link still exists, so removing a scorekeeper cuts
+    // off access to the partner's data too.
+    function skLink(owner) {
+      return exists(/databases/$(database)/documents/players/$(owner)/scorekeepers/$(request.auth.uid));
+    }
+    function skVia(owner) {
+      return get(/databases/$(database)/documents/players/$(owner)/scorekeepers/$(request.auth.uid)).data.viaOwner;
+    }
+    function skOf(owner) {
+      return request.auth != null && skLink(owner) && skLink(skVia(owner));
+    }
+    // Scorekeepers may never change what counts toward stats or hide a record.
+    function skSafeUpdate() {
+      return !request.resource.data.diff(resource.data).affectedKeys()
+        .hasAny(['includedInStats', 'hiddenByOwner', 'userId', 'owners', 'primaryOwner']);
+    }
+
     // — Player profiles ————————————————————
     // Each user owns their own doc and all subcollections.
     match /players/{uid} {
-      allow read: if request.auth != null && request.auth.uid == uid;
+      allow read: if request.auth != null && (request.auth.uid == uid || skOf(uid));
       allow write: if request.auth != null && request.auth.uid == uid;
-      // Paired partner can mirror team-level RP stats onto this account too —
-      // scoped to ONLY the rpStats field so a partner can never touch
-      // name/email/role/anything else on this profile.
+      // A paired partner or the owner's scorekeeper can mirror team-level RP stats
+      // onto this account — scoped to ONLY the rpStats field so they can never
+      // touch name/email/role/anything else on this profile.
       allow update: if request.auth != null
         && request.auth.uid != uid
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['rpStats'])
-        && get(/databases/$(database)/documents/players/$(request.auth.uid)/partners/$(uid)).data.status == 'paired';
+        && (skOf(uid)
+            || get(/databases/$(database)/documents/players/$(request.auth.uid)/partners/$(uid)).data.status == 'paired');
 
       // Partner relationship records
       match /partners/{partnerId} {
-        allow read: if request.auth != null && request.auth.uid == uid;
+        allow read: if request.auth != null && (request.auth.uid == uid || skOf(uid));
         allow write: if request.auth != null && (request.auth.uid == uid || request.auth.uid == partnerId);
+        // Scorekeeper bumping the match counters when scoring for this player.
+        allow update: if skOf(uid)
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['totalMatches', 'lastMatchDate']);
       }
 
-      // Shared-match cross-references written into a partner's subcollection
+      // Match reference docs (also written into a partner's subcollection when shared)
       match /matches/{matchId} {
         allow read, write: if request.auth != null && request.auth.uid == uid;
+        allow read, create: if skOf(uid);
+        allow update: if skOf(uid) && skSafeUpdate();
       }
 
-      // Shared-set cross-references written into a partner's subcollection
+      // Set reference docs written into a partner's subcollection
       match /sets/{setId} {
+        allow read, write: if request.auth != null && request.auth.uid == uid;
+        allow read, create: if skOf(uid);
+        allow update: if skOf(uid) && skSafeUpdate();
+      }
+
+      // Scorekeepers linked to this player. The scorekeeper creates the link when
+      // accepting; the player (or the scorekeeper) can remove it.
+      match /scorekeepers/{skId} {
+        allow read: if request.auth != null && (request.auth.uid == uid || request.auth.uid == skId);
+        allow create: if request.auth != null && request.auth.uid == skId
+          && request.resource.data.viaOwner is string
+          && exists(/databases/$(database)/documents/players/$(skId)/scorekeeperInvites/$(request.resource.data.viaOwner))
+          && (request.resource.data.viaOwner == uid
+              || get(/databases/$(database)/documents/players/$(uid)/partners/$(request.resource.data.viaOwner)).data.status == 'paired');
+        allow delete: if request.auth != null && (request.auth.uid == uid || request.auth.uid == skId);
+      }
+
+      // Invitations addressed to this user (written by the inviting owner).
+      match /scorekeeperInvites/{ownerId} {
+        allow read: if request.auth != null && request.auth.uid == uid;
+        allow create: if request.auth != null && request.auth.uid == ownerId;
+        allow update: if request.auth != null && request.auth.uid == uid
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'respondedAt']);
+        allow delete: if request.auth != null && (request.auth.uid == uid || request.auth.uid == ownerId);
+      }
+
+      // The owner's own record of invitations they have sent (for the pending list).
+      match /scorekeeperInvitesSent/{skId} {
         allow read, write: if request.auth != null && request.auth.uid == uid;
       }
     }
@@ -39,39 +95,55 @@ service cloud.firestore {
     // — Top-level matches collection ————————————————————
     match /matches/{matchId} {
       // Owner; a partner the match was shared with (they hold a reference doc keyed
-      // by this matchId); or a coach in the same program.
+      // by this matchId); a coach in the same program; or the owner's scorekeeper.
       allow read: if request.auth != null && (
           request.auth.uid == resource.data.userId
           || exists(/databases/$(database)/documents/players/$(request.auth.uid)/matches/$(matchId))
           || (resource.data.programId != null
               && get(/databases/$(database)/documents/players/$(request.auth.uid)).data.role == 'coach'
-              && get(/databases/$(database)/documents/players/$(request.auth.uid)).data.programId == resource.data.programId));
+              && get(/databases/$(database)/documents/players/$(request.auth.uid)).data.programId == resource.data.programId)
+          || skOf(resource.data.userId));
       allow create: if request.auth != null
-                      && request.auth.uid == request.resource.data.userId;
-      allow update, delete: if request.auth != null
+                      && (request.auth.uid == request.resource.data.userId
+                          || skOf(request.resource.data.userId));
+      allow update: if request.auth != null
+                      && (request.auth.uid == resource.data.userId
+                          || (skOf(resource.data.userId) && skSafeUpdate()));
+      allow delete: if request.auth != null
                       && request.auth.uid == resource.data.userId;
     }
 
     // — Top-level sets collection ————————————————————
     // A set's "owners" array may include a paired partner — either owner can
     // create/read/update/delete, so shared matches mirror into both accounts.
+    // A scorekeeper can create, read and update but never delete, and cannot
+    // change includedInStats.
     match /sets/{setId} {
       allow create: if request.auth != null
                       && (request.auth.uid == request.resource.data.userId
-                          || request.auth.uid in request.resource.data.owners);
-      allow read, update, delete: if request.auth != null
+                          || request.auth.uid in request.resource.data.owners
+                          || skOf(request.resource.data.userId));
+      allow read: if request.auth != null
+                      && (request.auth.uid == resource.data.userId
+                          || request.auth.uid in resource.data.owners
+                          || skOf(resource.data.userId));
+      allow update: if request.auth != null
+                      && (request.auth.uid == resource.data.userId
+                          || request.auth.uid in resource.data.owners
+                          || (skOf(resource.data.userId) && skSafeUpdate()));
+      allow delete: if request.auth != null
                       && (request.auth.uid == resource.data.userId
                           || request.auth.uid in resource.data.owners);
     }
 
-    // Subscription status (Lemon Squeezy): users read only their own record;
-    // only the webhook (Admin SDK) can write it.
+    // — Subscription status (Lemon Squeezy) ————————————————————
+    // Users can read only their own record; only the webhook can write it.
     match /subscribers/{uid} {
       allow read: if request.auth != null && request.auth.uid == uid;
       allow write: if false;
     }
 
-    // Admin-only team roster
+    // — Admin-only team roster ————————————————————
     match /roster/{playerId} {
       allow read: if request.auth != null;
       allow write: if request.auth != null && request.auth.token.email == 'brian.scott.swingle@gmail.com';
