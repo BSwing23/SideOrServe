@@ -2227,7 +2227,13 @@
                 updateQuickCoinToss();
             } catch (error) {
                 console.error('[QUICK COIN TOSS] Error:', error);
-                document.getElementById('quickCoinTossContent').innerHTML = '<p style="color: #f44336;">Error loading weather</p>';
+                document.getElementById('quickCoinTossContent').innerHTML = `
+                    <div class="stat-box">
+                        <p style="margin:0 0 4px;"><strong>Couldn't load the weather.</strong></p>
+                        <p style="margin:0;font-size:0.9em;opacity:0.8;">Enter the wind you see and you'll still get the recommendation.</p>
+                        ${manualWindInputsHtml()}
+                        <button class="btn btn-primary btn-small" onclick="applyManualWindQuick()" style="width:100%;margin-top:8px;">Use this wind</button>
+                    </div>`;
             }
         }
         
@@ -3342,6 +3348,7 @@
         }
 
         async function fetchWeather(venue, overrideOrientation = null) {
+            const _fetchStartedAt = Date.now();
             const apiKey = '375cb5070a5df8c1cec42204967cfb23';
             const { lat, lon } = venue.location;
             const controller = new AbortController();
@@ -3389,6 +3396,11 @@
                 
                 console.log('[WEATHER] Wind components:', windComponents);
                 
+                // A coach's manual wind entry made while this request was in flight wins.
+                if (matchSetup.weather?.isManualOverride && (matchSetup.weather.manualSetAt || 0) > _fetchStartedAt) {
+                    return matchSetup.weather;
+                }
+
                 // Store weather data for match record
                 matchSetup.weather = {
                     temp: temp,
@@ -3410,6 +3422,72 @@
                 console.error('Weather fetch error:', error.name === 'AbortError' ? 'Timed out after 8s' : error);
                 return null;
             }
+        }
+
+        // Manual wind entry — for courtside use when the weather service is slow or
+        // unavailable. Builds the same weather shape fetchWeather() stores, so
+        // everything downstream (Swingle level, side wind components, saved
+        // weatherAtSetStart) behaves identically. temp is left null on purpose.
+        function applyManualWind(venueId) {
+            const spd = parseFloat(document.getElementById('manualWindSpeed')?.value);
+            const deg = parseFloat(document.getElementById('manualWindDir')?.value);
+            if (isNaN(spd) || spd < 0 || spd > 80 || isNaN(deg)) {
+                alert('Enter a wind speed (0-80 mph) and the direction it is coming from.');
+                return;
+            }
+            const windSpeed = Math.round(spd);
+            const windDir = getWindDirection(deg);
+            const beaufort = getBeaufortScale(windSpeed);
+            const orientation = matchSetup.orientation || venues[venueId]?.orientation || 'North-South';
+            const sides = orientation.split('-');
+            matchSetup.weather = {
+                temp: null,
+                condition: 'Manual entry',
+                windSpeed: windSpeed,
+                windDirection: windDir,
+                windDegrees: deg,
+                beaufortForce: beaufort.level,
+                beaufortDescription: beaufort.description,
+                impact: beaufort.impact,
+                windComponents: {
+                    side1: { sideName: sides[0], relativeWind: getRelativeWindDirection(windDir, orientation, sides[0]), windSpeed: windSpeed },
+                    side2: { sideName: sides[1], relativeWind: getRelativeWindDirection(windDir, orientation, sides[1]), windSpeed: windSpeed }
+                },
+                isManualOverride: true,
+                manualSetAt: Date.now(),
+                timestamp: new Date().toISOString()
+            };
+            updateCoinTossDisplay(document.getElementById('setupCoinTossContent'), venueId || matchSetup.venue || null);
+        }
+
+        function applyManualWindQuick() {
+            const spd = parseFloat(document.getElementById('manualWindSpeed')?.value);
+            const deg = parseFloat(document.getElementById('manualWindDir')?.value);
+            if (isNaN(spd) || spd < 0 || spd > 80 || isNaN(deg)) {
+                alert('Enter a wind speed (0-80 mph) and the direction it is coming from.');
+                return;
+            }
+            quickToolWeatherData = {
+                temp: null,
+                condition: 'Manual entry',
+                windSpeed: Math.round(spd),
+                windDirection: getWindDirection(deg),
+                windDegrees: deg
+            };
+            updateQuickCoinToss();
+        }
+
+        function manualWindInputsHtml() {
+            const dirs = [['N',0],['NE',45],['E',90],['SE',135],['S',180],['SW',225],['W',270],['NW',315]];
+            const field = 'padding:8px;border-radius:6px;background:rgba(255,255,255,0.1);color:white;border:1px solid rgba(255,255,255,0.3);font-size:0.9em;';
+            return `<div style="display:flex;gap:8px;margin-top:8px;">
+                    <input type="number" id="manualWindSpeed" min="0" max="80" placeholder="Wind mph" style="flex:1;min-width:0;${field}">
+                    <select id="manualWindDir" style="flex:1;min-width:0;${field}">
+                        <option value="">Wind from…</option>
+                        ${dirs.map(([n, d]) => `<option value="${d}" style="color:#333;">${n}</option>`).join('')}
+                    </select>
+                </div>
+                <div style="font-size:0.72em;opacity:0.55;margin-top:4px;">Direction the wind is coming FROM.</div>`;
         }
 
         function getWindDirection(degrees) {
@@ -7935,7 +8013,7 @@
                     
                     <div class="stat-row">
                         <span>🌡️ Temperature:</span>
-                        <span><strong>${Math.round(weatherData.temp)}°F</strong></span>
+                        <span><strong>${weatherData.temp != null ? Math.round(weatherData.temp) + '°F' : '—'}</strong></span>
                     </div>
                     <div class="stat-row">
                         <span>☁️ Conditions:</span>
@@ -9801,6 +9879,23 @@
                     </div>`
                 : '';
 
+            // Wind status + manual entry (Match Setup only). Without wind loaded the
+            // recommendation is not wind-adjusted, so say so instead of staying silent.
+            const _wx = matchSetup.weather;
+            const _hasWind = !!(_wx && _wx.windSpeed != null);
+            const windCard = isSetupFlow
+                ? `<div style="margin-bottom:14px;padding:10px 12px;background:rgba(255,255,255,0.06);border-radius:8px;${_hasWind ? '' : 'border:1px solid rgba(255,255,255,0.35);'}">
+                        <div style="font-size:0.88em;">${_hasWind
+                            ? `Wind: <strong>${Math.round(_wx.windSpeed)} mph${_wx.windDirection ? ' from ' + _wx.windDirection : ''}</strong> (Swingle ${_wx.beaufortForce ?? '—'})${_wx.isManualOverride ? ' · entered manually' : ''}`
+                            : `<strong>Wind not loaded.</strong> The recommendation is not wind-adjusted until you enter it.`}</div>
+                        <details ${_hasWind ? '' : 'open'} style="margin-top:8px;">
+                            <summary style="cursor:pointer;font-size:0.8em;opacity:0.75;">${_hasWind ? 'Wind different? Enter it manually' : 'Enter wind manually'}</summary>
+                            ${manualWindInputsHtml()}
+                            <button class="btn btn-secondary btn-small" onclick="applyManualWind('${explicitVenueId || matchSetup.venue || ''}')" style="width:100%;margin-top:8px;">Use this wind</button>
+                        </details>
+                    </div>`
+                : '';
+
             // Pre-match fallback: if there's no live P7 data yet, use historical data for
             // the configured venue so this shows a real recommendation instead of just a
             // venue picker. Live in-match behavior is untouched — calculateP7Stats().hasData
@@ -9855,6 +9950,7 @@
                 const venueOptions = getVenueEntriesForDropdown().map(([k,v]) =>
                     `<option value="${k}">${v.name}</option>`).join('');
                 content.innerHTML = `
+                    ${windCard}
                     <div style="text-align:center;padding:22px 16px 16px;margin-bottom:12px;">
                         <div style="font-size:1.75em;font-weight:900;letter-spacing:0.03em;color:white;line-height:1.15;margin-bottom:8px;">
                             CHOOSE RECEIVE FIRST
@@ -10189,6 +10285,7 @@
 
             let html = `
                 ${venuePicker}
+                ${windCard}
                 <!-- HERO DIRECTIVE -->
                 <div style="text-align:center;padding:22px 16px 16px;margin-bottom:12px;">
                     <div style="font-size:1.75em;font-weight:900;letter-spacing:0.03em;color:${heroColor};line-height:1.15;margin-bottom:12px;">
@@ -10620,7 +10717,7 @@
                     
                     <div class="stat-row">
                         <span>🌡️ Temperature:</span>
-                        <span><strong>${Math.round(weatherData.temp)}°F</strong></span>
+                        <span><strong>${weatherData.temp != null ? Math.round(weatherData.temp) + '°F' : '—'}</strong></span>
                     </div>
                     <div class="stat-row">
                         <span>☁️ Conditions:</span>
