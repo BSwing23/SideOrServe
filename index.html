@@ -12067,13 +12067,18 @@
             try {
                 console.log('[PARTNERS] Searching for:', searchInput);
                 
-                // Search by email in player profiles
-                const usersSnapshot = await db.collection('players')
-                    .where('email', '==', searchInput)
-                    .limit(5)
-                    .get();
-                
-                if (usersSnapshot.empty) {
+                // Profiles are private to their owners in Firestore, so the exact-email
+                // lookup runs server-side (netlify/functions/find-partner.js).
+                const idToken = await currentUser.getIdToken();
+                const resp = await fetch('/.netlify/functions/find-partner', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + idToken },
+                    body: JSON.stringify({ email: searchInput })
+                });
+                if (!resp.ok) throw new Error('Partner lookup failed (' + resp.status + ')');
+                const { users } = await resp.json();
+
+                if (!users.length) {
                     document.getElementById('partnerSearchResults').innerHTML = `
                         <div style="text-align: center; padding: 20px; opacity: 0.7;">
                             No users found with that email.
@@ -12082,19 +12087,14 @@
                     document.getElementById('partnerSearchResults').style.display = 'block';
                     return;
                 }
-                
+
                 // Display results
                 let html = '<div style="margin-bottom: 10px;"><strong>Found:</strong></div>';
-                
-                for (const doc of usersSnapshot.docs) {
-                    const user = doc.data();
-                    const userId = doc.id;
-                    
-                    // Don't show self
-                    if (userId === currentUser.uid) {
-                        continue;
-                    }
-                    
+
+                for (const found of users) {
+                    const user = found;
+                    const userId = found.uid;
+
                     html += `
                         <div style="background: rgba(255,255,255,0.15); padding: 15px; border-radius: 8px; margin-top: 10px;">
                             <div style="font-weight: bold; margin-bottom: 5px;">${user.name || 'User'}</div>
@@ -12105,7 +12105,7 @@
                         </div>
                     `;
                 }
-                
+
                 document.getElementById('partnerSearchResults').innerHTML = html;
                 document.getElementById('partnerSearchResults').style.display = 'block';
                 
