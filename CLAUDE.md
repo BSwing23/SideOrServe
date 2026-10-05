@@ -99,6 +99,9 @@ Profiles are private to their owner in Firestore. Partner/scorekeeper lookup by 
 ### Admin insights
 `netlify/functions/admin-aggregates.js` (admin account only) returns anonymous aggregates across all accounts (e.g., win rate of the team ahead at each switch). No names, emails or per-set records leave the server.
 
+### Live Board and On-Air Numbers
+`index.html?board=<venueId>` is a public, login-free page (`BOARD_MODE`) showing every court being scored at a venue, plus "On-Air Numbers" for broadcasters. Scorers opt in per match (checkbox + optional Court on Match Setup; built-in venues only). `publishBoard()` writes names and scores to one doc per court, `liveBoard/{venueId}__{court}` (overwritten by the next match, so the collection stays tiny); rules allow public read, scorer-only write, and takeover of a court entry stale for 2 hours. On-air numbers come from `netlify/functions/venue-insights.js`, which aggregates all completed sets at the venue (mirrors, the test venue and excluded sets removed) and returns only counts and percentages. Side edge = share of points scored by the team standing on each side of a compass pair; the headline "X% more" is the difference in those shares.
+
 ### Pooled Venue Stats (cross-subscriber)
 `updatePooledVenueStats()` / `fetchPooledVenueStats()` (in `index.html`) build a shared, aggregate-only database of side/weather effects at built-in venues, pooled across every subscriber — not just the current user. Scoped by venue + competition tier + Swingle Scale wind level. Custom venues are deliberately excluded: a custom venue's id (`custom-0`, `custom-1`, ...) is just an index into *that specific user's* own venue list, not globally unique, so pooling them would silently merge unrelated courts. Displayed as "🌐 Community Data" inside the Side Bias section of the Data tab. No raw per-set data is exposed or attributable to any individual user — only summed point totals per venue/tier/wind-level bucket.
 
