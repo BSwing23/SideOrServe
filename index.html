@@ -880,6 +880,16 @@
 
         </div><!-- end adminOverrideBlocks -->
 
+        <!-- Scorekeeper mode: who is playing for the account being scored (e.g. a program
+             account with several iPads — the account owner's name is rarely the player). -->
+        <div id="actingPlayerBlock" style="display:none;">
+            <h3>👤 Your Team — Player 1</h3>
+            <div class="form-group">
+                <input type="text" id="actingPlayerName" placeholder="Player 1 full name" list="partnerNameList" autocomplete="off" oninput="updateMatchSetupLabels()"
+                    style="width:100%;padding:12px;border-radius:10px;border:none;font-size:1em;background:rgba(255,255,255,0.9);color:#333;">
+            </div>
+        </div>
+
         <h3>🤝 Your Partner</h3>
         <div class="form-group">
             <label for="partnerName">Partner Name:</label>
@@ -2807,6 +2817,13 @@
             // Show admin-only blocks only for the primary account
             const _adminSec = document.getElementById('adminOverrideBlocks');
             if (_adminSec) _adminSec.style.display = isAdmin() ? '' : 'none';
+            // Scorekeepers name Player 1 for each match (prefilled with the account owner's name).
+            const _actingBlock = document.getElementById('actingPlayerBlock');
+            if (_actingBlock) {
+                _actingBlock.style.display = isActingAs() ? '' : 'none';
+                const _actingInput = document.getElementById('actingPlayerName');
+                if (_actingInput) _actingInput.value = isActingAs() ? (userProfile?.name || '') : '';
+            }
             
             // Populate venue dropdown with built-in + custom venues
             populateMatchSetupVenues();
@@ -2886,7 +2903,9 @@
             // the admin account's own profile name.
             const playerName = isAdmin()
                 ? (document.getElementById('adminPlayerName')?.value.trim() || 'Your')
-                : (document.getElementById('playerName')?.value.trim() || userProfile.name || 'Your');
+                : isActingAs()
+                    ? (document.getElementById('actingPlayerName')?.value.trim() || userProfile.name || 'Your')
+                    : (document.getElementById('playerName')?.value.trim() || userProfile.name || 'Your');
             const partnerName = document.getElementById('partnerName').value.trim() || 'Partner';
             const opp1Name = document.getElementById('opponent1Name').value.trim() || 'Opponent 1';
             const opp2Name = document.getElementById('opponent2Name').value.trim() || 'Opponent 2';
@@ -3951,7 +3970,9 @@
         }
 
         async function startMatch() {
-            const yourName = document.getElementById('playerName') ? document.getElementById('playerName').value.trim() : '';
+            const yourName = isActingAs()
+                ? (document.getElementById('actingPlayerName')?.value.trim() || '')
+                : (document.getElementById('playerName') ? document.getElementById('playerName').value.trim() : '');
             const partnerName = document.getElementById('partnerName').value.trim();
             const opp1Name = document.getElementById('opponent1Name').value.trim();
             const opp2Name = document.getElementById('opponent2Name').value.trim();
