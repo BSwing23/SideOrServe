@@ -678,6 +678,7 @@
         <!-- Admin-only: Team Roster — hidden for all other accounts -->
         <div id="rosterHomeBtn" style="display:none;">
             <button class="btn btn-secondary menu-btn" onclick="showRosterScreen()">📋 Team Roster</button>
+            <button class="btn btn-secondary menu-btn" onclick="showInsightsScreen()">📊 All-User Insights</button>
         </div>
         <button class="btn btn-secondary menu-btn" onclick="logout()">Log Out</button>
     </div>
@@ -1294,6 +1295,25 @@
             <button class="btn btn-secondary" onclick="paywallRecheckAccess()">I've already subscribed — check again</button>
         </div>
         <button class="btn btn-secondary" onclick="logout()">Log Out</button>
+    </div>
+
+    <!-- All-User Insights Screen (Admin Only) -->
+    <div id="insightsScreen" class="container hidden">
+        <h1><img src="logo.png" style="width: 32px; height: 32px; vertical-align: middle; margin-right: 8px;">Insights</h1>
+        <div style="text-align:center; font-size:0.85em; opacity:0.7; margin-bottom:14px;">Anonymous totals across every account. No names or emails are ever shown.</div>
+
+        <div style="display: flex; gap: 5px; margin-bottom: 10px; justify-content: center;">
+            <button id="insightsType21Btn" onclick="setInsightsType('21')"
+                style="flex:1; max-width:120px; padding:6px 0; border-radius:6px; border:1px solid rgba(255,255,255,0.3); cursor:pointer; font-size:0.9em; font-weight:bold; background:rgba(255,255,255,0.18); color:white;">21-Point</button>
+            <button id="insightsType15Btn" onclick="setInsightsType('15')"
+                style="flex:1; max-width:120px; padding:6px 0; border-radius:6px; border:1px solid rgba(255,255,255,0.15); cursor:pointer; font-size:0.9em; font-weight:bold; background:rgba(255,255,255,0.06); color:rgba(255,255,255,0.5);">15-Point</button>
+        </div>
+
+        <div id="insightsContent">
+            <p style="text-align:center; opacity:0.7; padding:20px 0;">Loading...</p>
+        </div>
+
+        <button class="btn btn-secondary" onclick="showHomeScreen()" style="margin-top:16px;">Back to Home</button>
     </div>
 
     <!-- Team Roster Screen (Admin Only) -->
@@ -2053,6 +2073,7 @@
             document.getElementById('quickStatsScreen').classList.add('hidden');
             document.getElementById('commandCenterScreen').classList.add('hidden');
             document.getElementById('rosterScreen').classList.add('hidden');
+            document.getElementById('insightsScreen').classList.add('hidden');
             document.getElementById('paywallScreen').classList.add('hidden');
         }
 
@@ -7383,6 +7404,97 @@
             } catch (error) {
                 console.error('[ROSTER] Error seeding initial roster:', error);
             }
+        }
+
+        // ============================================================
+        // ALL-USER INSIGHTS (Admin Only)
+        // Anonymous aggregates computed server-side (netlify/functions/
+        // admin-aggregates.js) so no per-user or per-set data reaches the browser.
+        // ============================================================
+        let insightsData = null;
+        let insightsType = '21';
+        let insightsSwitch = 1;
+
+        function showInsightsScreen() {
+            hideAllScreens();
+            document.getElementById('insightsScreen').classList.remove('hidden');
+            loadInsights();
+        }
+
+        async function loadInsights() {
+            const content = document.getElementById('insightsContent');
+            content.innerHTML = '<p style="text-align:center; opacity:0.7; padding:20px 0;">Loading...</p>';
+            try {
+                const idToken = await currentUser.getIdToken();
+                const resp = await fetch('/.netlify/functions/admin-aggregates', {
+                    headers: { 'Authorization': 'Bearer ' + idToken }
+                });
+                if (!resp.ok) throw new Error('HTTP ' + resp.status);
+                insightsData = await resp.json();
+                renderInsights();
+            } catch (error) {
+                console.error('[INSIGHTS] Error:', error);
+                content.innerHTML = '<p style="text-align:center; opacity:0.7; padding:20px 0;">Could not load insights.</p>';
+            }
+        }
+
+        function setInsightsType(type) {
+            insightsType = type;
+            insightsSwitch = 1;
+            [['21', 'insightsType21Btn'], ['15', 'insightsType15Btn']].forEach(([t, id]) => {
+                const el = document.getElementById(id);
+                if (!el) return;
+                const active = t === type;
+                el.style.background = active ? 'rgba(255,255,255,0.18)' : 'rgba(255,255,255,0.06)';
+                el.style.color = active ? 'white' : 'rgba(255,255,255,0.5)';
+                el.style.borderColor = active ? 'rgba(255,255,255,0.3)' : 'rgba(255,255,255,0.15)';
+            });
+            renderInsights();
+        }
+
+        function setInsightsSwitch(n) {
+            insightsSwitch = n;
+            renderInsights();
+        }
+
+        function renderInsights() {
+            const content = document.getElementById('insightsContent');
+            if (!insightsData || !content) return;
+            const ov = insightsData.overview;
+            const switches = insightsData.switches[insightsType] || [];
+            const sw = switches.find(x => x.switchNumber === insightsSwitch) || switches[0];
+            const interval = insightsType === '15' ? 5 : 7;
+            const ordinal = n => ['', '1st', '2nd', '3rd', '4th'][n] || n + 'th';
+
+            let html = `<div style="text-align:center; font-size:0.85em; opacity:0.8; margin-bottom:14px;">
+                ${ov.sets} sets · ${ov.matches} matches · ${ov.accounts} accounts
+                (${ov.byType['21']} twenty-one-point, ${ov.byType['15']} fifteen-point)</div>`;
+
+            if (!sw) {
+                content.innerHTML = html + '<p style="text-align:center; opacity:0.7; padding:20px 0;">No completed sets with switch data yet.</p>';
+                return;
+            }
+
+            html += `<div style="display:flex; gap:5px; justify-content:center; margin-bottom:12px;">
+                ${switches.map(x => {
+                    const active = x.switchNumber === sw.switchNumber;
+                    return `<button onclick="setInsightsSwitch(${x.switchNumber})" style="flex:1; max-width:120px; padding:6px 0; border-radius:6px; border:1px solid ${active ? 'rgba(255,255,255,0.3)' : 'rgba(255,255,255,0.15)'}; cursor:pointer; font-size:0.85em; font-weight:bold; background:${active ? 'rgba(255,255,255,0.18)' : 'rgba(255,255,255,0.06)'}; color:${active ? 'white' : 'rgba(255,255,255,0.5)'};">${ordinal(x.switchNumber)} switch</button>`;
+                }).join('')}
+            </div>`;
+
+            const thin = r => r.thin ? ' <span style="opacity:0.6;font-size:0.8em;">(thin data)</span>' : '';
+            const row = (label, r) => `<div class="stat-row"><span>${label}</span><span><strong>${r.pct}%</strong> <span style="opacity:0.7;">(${r.leaderWon} of ${r.n})</span>${thin(r)}</span></div>`;
+
+            html += `<div class="stat-box">
+                <h3>📊 ${ordinal(sw.switchNumber).toUpperCase()} SWITCH — AFTER ${sw.atTotalPoints} POINTS</h3>
+                <div style="font-size:0.8em; opacity:0.65; margin-bottom:10px;">How often the team that is ahead at this switch goes on to win the set. Each row is the score at the switch, leader first.</div>
+                <div style="font-size:0.72em; letter-spacing:0.06em; opacity:0.55; text-transform:uppercase; margin-bottom:2px;">By exact score</div>
+                ${sw.rows.map(r => row(r.score, r)).join('') || '<div style="opacity:0.6;font-size:0.9em;">No sets reached this switch with a leader.</div>'}
+                <div style="font-size:0.72em; letter-spacing:0.06em; opacity:0.55; text-transform:uppercase; margin:12px 0 2px;">By size of lead</div>
+                ${sw.byMargin.map(m => row('Ahead by ' + m.margin, m)).join('')}
+                ${sw.tied ? `<div style="font-size:0.8em; opacity:0.6; margin-top:10px;">${sw.tied} set${sw.tied === 1 ? '' : 's'} were tied here (no leader, not counted above).</div>` : ''}
+            </div>`;
+            content.innerHTML = html;
         }
 
         async function clearAllHistory() {
