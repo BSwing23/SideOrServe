@@ -2230,9 +2230,8 @@
                 document.getElementById('quickCoinTossContent').innerHTML = `
                     <div class="stat-box">
                         <p style="margin:0 0 4px;"><strong>Couldn't load the weather.</strong></p>
-                        <p style="margin:0;font-size:0.9em;opacity:0.8;">Enter the wind you see and you'll still get the recommendation.</p>
-                        ${manualWindInputsHtml()}
-                        <button class="btn btn-primary btn-small" onclick="applyManualWindQuick()" style="width:100%;margin-top:8px;">Use this wind</button>
+                        <p style="margin:0;font-size:0.9em;opacity:0.8;">Choose the conditions and you'll still get a recommendation.</p>
+                        ${windPresetButtonsHtml('applyWindPresetQuick', null, null)}
                     </div>`;
             }
         }
@@ -2306,8 +2305,9 @@
             // Orientation is already known from the venue itself — no need to ask again.
             const orientation = quickToolVenue.orientation || 'North-South';
             const sides = orientation.split('-');
-            const windAnalysis = calculateWindDirection(quickToolWeatherData.windDegrees, orientation);
-            const beaufortLevel = getBeaufortLevel(quickToolWeatherData.windSpeed);
+            const _qEst = quickToolWeatherData.isEstimatedWind === true;
+            const windAnalysis = _qEst ? { crosswind: true } : calculateWindDirection(quickToolWeatherData.windDegrees, orientation);
+            const beaufortLevel = _qEst ? quickToolWeatherData.level : getBeaufortLevel(quickToolWeatherData.windSpeed);
 
             // Same synthesis engine the live in-match Coin Toss tab uses — fed from
             // historical P7 data for this venue instead of live matchState. Prefers
@@ -2329,7 +2329,9 @@
                 pooledSideRatios
             });
 
-            const windNote = windAnalysis.crosswind
+            const windNote = _qEst
+                ? `Wind is your estimate (${quickToolWeatherData.windCategory}) — direction unknown, so no side-specific wind edge is assumed.`
+                : windAnalysis.crosswind
                 ? `Crosswind at ${quickToolWeatherData.windSpeed} mph — floats and high sets will drift; neither side has a tailwind edge.`
                 : `Tailwind favors the ${windAnalysis.tailwindSide} side at ${quickToolWeatherData.windSpeed} mph.`;
 
@@ -2337,7 +2339,7 @@
                 <div class="stat-box">
                     <h3>🎯 COIN TOSS RECOMMENDATION</h3>
                     <div style="font-size: 0.9em; margin-bottom: 20px; opacity: 0.9;">
-                        ${quickToolVenue.name} — ${quickToolWeatherData.windSpeed} mph from ${quickToolWeatherData.windDirection} (Swingle Scale ${beaufortLevel})
+                        ${quickToolVenue.name} — ${_qEst ? quickToolWeatherData.windCategory + ' (your estimate)' : quickToolWeatherData.windSpeed + ' mph from ' + quickToolWeatherData.windDirection} (Swingle Scale ${beaufortLevel})
                     </div>
             `;
 
@@ -3396,8 +3398,8 @@
                 
                 console.log('[WEATHER] Wind components:', windComponents);
                 
-                // A coach's manual wind entry made while this request was in flight wins.
-                if (matchSetup.weather?.isManualOverride && (matchSetup.weather.manualSetAt || 0) > _fetchStartedAt) {
+                // A coach's wind preset chosen while this request was in flight wins.
+                if (matchSetup.weather?.isEstimatedWind && (matchSetup.weather.manualSetAt || 0) > _fetchStartedAt) {
                     return matchSetup.weather;
                 }
 
@@ -3424,70 +3426,71 @@
             }
         }
 
-        // Manual wind entry — for courtside use when the weather service is slow or
-        // unavailable. Builds the same weather shape fetchWeather() stores, so
-        // everything downstream (Swingle level, side wind components, saved
-        // weatherAtSetStart) behaves identically. temp is left null on purpose.
-        function applyManualWind(venueId) {
-            const spd = parseFloat(document.getElementById('manualWindSpeed')?.value);
-            const deg = parseFloat(document.getElementById('manualWindDir')?.value);
-            if (isNaN(spd) || spd < 0 || spd > 80 || isNaN(deg)) {
-                alert('Enter a wind speed (0-80 mph) and the direction it is coming from.');
-                return;
-            }
-            const windSpeed = Math.round(spd);
-            const windDir = getWindDirection(deg);
-            const beaufort = getBeaufortScale(windSpeed);
-            const orientation = matchSetup.orientation || venues[venueId]?.orientation || 'North-South';
-            const sides = orientation.split('-');
-            matchSetup.weather = {
+        // Courtside wind presets — for when the weather service is slow or unavailable.
+        // Deliberately three coarse choices, not free-form numbers: a guessed mph/
+        // direction would look like measured data. A preset sets the Swingle level so
+        // the recommendation can still use wind-conditioned history, but the set is
+        // flagged isEstimatedWind and kept OUT of every venue-keyed statistic (pooled
+        // community venueStats, per-venue/orientation P7 and side data, Side Advantage,
+        // Side Bias). windSpeed/direction stay null — no fake measurements anywhere.
+        const WIND_PRESETS = {
+            calm:  { label: 'Calm',         nominalMph: 2,  hint: 'Sand drops straight out of your hand.' },
+            light: { label: 'Light Breeze', nominalMph: 6,  hint: 'Sand drifts sideways as it falls.' },
+            windy: { label: 'Windy',        nominalMph: 15, hint: 'Sand blows off your hand.' }
+        };
+
+        function buildEstimatedWeather(presetKey) {
+            const preset = WIND_PRESETS[presetKey];
+            if (!preset) return null;
+            const beaufort = getBeaufortScale(preset.nominalMph);
+            return {
                 temp: null,
-                condition: 'Manual entry',
-                windSpeed: windSpeed,
-                windDirection: windDir,
-                windDegrees: deg,
+                condition: 'Coach estimate: ' + preset.label,
+                windSpeed: null,
+                windDirection: null,
+                windDegrees: null,
                 beaufortForce: beaufort.level,
                 beaufortDescription: beaufort.description,
                 impact: beaufort.impact,
-                windComponents: {
-                    side1: { sideName: sides[0], relativeWind: getRelativeWindDirection(windDir, orientation, sides[0]), windSpeed: windSpeed },
-                    side2: { sideName: sides[1], relativeWind: getRelativeWindDirection(windDir, orientation, sides[1]), windSpeed: windSpeed }
-                },
-                isManualOverride: true,
+                windComponents: null,
+                isEstimatedWind: true,
+                windCategory: preset.label,
+                windPresetKey: presetKey,
                 manualSetAt: Date.now(),
                 timestamp: new Date().toISOString()
             };
+        }
+
+        function applyWindPreset(presetKey, venueId) {
+            const w = buildEstimatedWeather(presetKey);
+            if (!w) return;
+            matchSetup.weather = w;
             updateCoinTossDisplay(document.getElementById('setupCoinTossContent'), venueId || matchSetup.venue || null);
         }
 
-        function applyManualWindQuick() {
-            const spd = parseFloat(document.getElementById('manualWindSpeed')?.value);
-            const deg = parseFloat(document.getElementById('manualWindDir')?.value);
-            if (isNaN(spd) || spd < 0 || spd > 80 || isNaN(deg)) {
-                alert('Enter a wind speed (0-80 mph) and the direction it is coming from.');
-                return;
-            }
+        function applyWindPresetQuick(presetKey) {
+            const w = buildEstimatedWeather(presetKey);
+            if (!w) return;
             quickToolWeatherData = {
                 temp: null,
-                condition: 'Manual entry',
-                windSpeed: Math.round(spd),
-                windDirection: getWindDirection(deg),
-                windDegrees: deg
+                condition: w.condition,
+                windSpeed: null,
+                windDirection: null,
+                windDegrees: null,
+                isEstimatedWind: true,
+                windCategory: w.windCategory,
+                level: w.beaufortForce
             };
             updateQuickCoinToss();
         }
 
-        function manualWindInputsHtml() {
-            const dirs = [['N',0],['NE',45],['E',90],['SE',135],['S',180],['SW',225],['W',270],['NW',315]];
-            const field = 'padding:8px;border-radius:6px;background:rgba(255,255,255,0.1);color:white;border:1px solid rgba(255,255,255,0.3);font-size:0.9em;';
-            return `<div style="display:flex;gap:8px;margin-top:8px;">
-                    <input type="number" id="manualWindSpeed" min="0" max="80" placeholder="Wind mph" style="flex:1;min-width:0;${field}">
-                    <select id="manualWindDir" style="flex:1;min-width:0;${field}">
-                        <option value="">Wind from…</option>
-                        ${dirs.map(([n, d]) => `<option value="${d}" style="color:#333;">${n}</option>`).join('')}
-                    </select>
-                </div>
-                <div style="font-size:0.72em;opacity:0.55;margin-top:4px;">Direction the wind is coming FROM.</div>`;
+        function windPresetButtonsHtml(handler, venueArg, selectedKey) {
+            const btn = (key, active) => `<button onclick="${handler}('${key}'${venueArg !== null ? `, '${venueArg}'` : ''})"
+                style="display:block;width:100%;text-align:left;padding:10px 12px;border-radius:6px;border:1px solid ${active ? 'rgba(255,255,255,0.3)' : 'rgba(255,255,255,0.15)'};cursor:pointer;background:${active ? 'rgba(255,255,255,0.18)' : 'rgba(255,255,255,0.06)'};color:${active ? 'white' : 'rgba(255,255,255,0.8)'};">
+                    <span style="font-size:0.95em;font-weight:bold;">${WIND_PRESETS[key].label}</span>
+                    <span style="display:block;font-size:0.8em;opacity:0.7;margin-top:2px;">${WIND_PRESETS[key].hint}</span>
+                </button>`;
+            return `<div style="display:flex;flex-direction:column;gap:6px;margin-top:8px;">${Object.keys(WIND_PRESETS).map(k => btn(k, k === selectedKey)).join('')}</div>`;
         }
 
         function getWindDirection(degrees) {
@@ -4046,6 +4049,8 @@
                     windSpeed: matchSetup.weather.windSpeed ?? null,
                     windDir: matchSetup.weather.windDeg ?? null,
                     windDescription: matchSetup.weather.description ?? null,
+                    isEstimatedWind: matchSetup.weather.isEstimatedWind === true,
+                    windCategory: matchSetup.weather.windCategory ?? null,
                     capturedAt: new Date().toISOString()
                 } : null
             };
@@ -6030,7 +6035,7 @@
             }
 
             // Side bias — isolated per tier
-            (matchState.completedSegments || []).forEach(seg => {
+            (matchState.weatherAtSetStart?.isEstimatedWind ? [] : (matchState.completedSegments || [])).forEach(seg => {
                 if (seg.side) {
                     const compassKey = seg.side.toLowerCase();
                     const totalPts = (seg.ourPoints || 0) + (seg.theirPoints || 0);
@@ -6278,6 +6283,8 @@
                 // user's own venue list, not a globally unique id, so pooling custom
                 // venues would silently merge unrelated courts.
                 if (!venueId || !venues[venueId]) return;
+                // Wind picked from a preset (not measured) must never enter the community pool.
+                if (matchState.weatherAtSetStart?.isEstimatedWind) return;
                 const segments = matchState.completedSegments || [];
                 if (!segments.length) return;
 
@@ -9159,6 +9166,7 @@
                     const vid = setData.venueId;
                     if (!vid) return;
                     if (isTestVenueId(vid)) return;
+                    if (setData.weatherAtSetStart?.isEstimatedWind) return;
                     if (competitive && !isCompetitiveSet(setData.ourScore, setData.theirScore, setData.gameType === 'deciding' ? 15 : 21)) return;
                     const vname = setData.venue || vid;
                     if (!venueData[vid]) venueData[vid] = { name: vname, sets: [] };
@@ -9184,7 +9192,8 @@
                         venue: matchSetup.venueName || matchSetup.venue,
                         ourScore: matchState.ourScore,
                         theirScore: matchState.theirScore,
-                        gameType: matchSetup.gameType
+                        gameType: matchSetup.gameType,
+                        weatherAtSetStart: matchState.weatherAtSetStart
                     });
                 }
                 
@@ -9720,6 +9729,7 @@
                     const vid = setData.venueId;
                     if (!vid) return;
                     if (isTestVenueId(vid)) return;
+                    if (setData.weatherAtSetStart?.isEstimatedWind) return;
                     const vname = setData.venue || vid;
                     if (!venueBias[vid]) venueBias[vid] = { name: vname, sidePoints: {} };
                     setData.completedSegments.forEach(seg => {
@@ -9749,7 +9759,8 @@
                         venue: matchSetup.venueName || matchSetup.venue,
                         ourScore: matchState.ourScore,
                         theirScore: matchState.theirScore,
-                        gameType: matchSetup.gameType
+                        gameType: matchSetup.gameType,
+                        weatherAtSetStart: matchState.weatherAtSetStart
                     });
                 }
 
@@ -9879,19 +9890,21 @@
                     </div>`
                 : '';
 
-            // Wind status + manual entry (Match Setup only). Without wind loaded the
+            // Wind status + courtside presets (Match Setup only). Without wind loaded the
             // recommendation is not wind-adjusted, so say so instead of staying silent.
             const _wx = matchSetup.weather;
-            const _hasWind = !!(_wx && _wx.windSpeed != null);
+            const _hasWind = !!(_wx && (_wx.windSpeed != null || _wx.isEstimatedWind));
             const windCard = isSetupFlow
                 ? `<div style="margin-bottom:14px;padding:10px 12px;background:rgba(255,255,255,0.06);border-radius:8px;${_hasWind ? '' : 'border:1px solid rgba(255,255,255,0.35);'}">
-                        <div style="font-size:0.88em;">${_hasWind
-                            ? `Wind: <strong>${Math.round(_wx.windSpeed)} mph${_wx.windDirection ? ' from ' + _wx.windDirection : ''}</strong> (Swingle ${_wx.beaufortForce ?? '—'})${_wx.isManualOverride ? ' · entered manually' : ''}`
-                            : `<strong>Wind not loaded.</strong> The recommendation is not wind-adjusted until you enter it.`}</div>
+                        <div style="font-size:0.88em;">${_wx?.isEstimatedWind
+                            ? `Wind: <strong>${_wx.windCategory}</strong> (your estimate · Swingle ${_wx.beaufortForce ?? '—'}) — not added to venue data`
+                            : _hasWind
+                                ? `Wind: <strong>${Math.round(_wx.windSpeed)} mph${_wx.windDirection ? ' from ' + _wx.windDirection : ''}</strong> (Swingle ${_wx.beaufortForce ?? '—'})`
+                                : `<strong>Wind not loaded.</strong> The recommendation is not wind-adjusted until you choose conditions below.`}</div>
                         <details ${_hasWind ? '' : 'open'} style="margin-top:8px;">
-                            <summary style="cursor:pointer;font-size:0.8em;opacity:0.75;">${_hasWind ? 'Wind different? Enter it manually' : 'Enter wind manually'}</summary>
-                            ${manualWindInputsHtml()}
-                            <button class="btn btn-secondary btn-small" onclick="applyManualWind('${explicitVenueId || matchSetup.venue || ''}')" style="width:100%;margin-top:8px;">Use this wind</button>
+                            <summary style="cursor:pointer;font-size:0.8em;opacity:0.75;">${_hasWind ? 'Weather wrong? Choose conditions instead' : 'Weather not loading? Choose conditions'}</summary>
+                            ${windPresetButtonsHtml('applyWindPreset', explicitVenueId || matchSetup.venue || '', _wx?.windPresetKey || null)}
+                            <div style="font-size:0.72em;opacity:0.55;margin-top:6px;">Your pick adjusts this recommendation only. Matches scored on an estimate are kept out of venue wind data.</div>
                         </details>
                     </div>`
                 : '';
@@ -11534,6 +11547,7 @@
                         // only a permissive fallback for a caller that hasn't been updated to
                         // pass it; every current caller does).
                         if (isDeciding !== null && (d.gameType === 'deciding') !== isDeciding) return;
+                        if (d.weatherAtSetStart?.isEstimatedWind) return;
                         if (!matchesSwingle(d.weatherAtSetStart)) return;
                         if (competitive && !isCompetitiveSet(d.ourScore, d.theirScore, d.gameType === 'deciding' ? 15 : 21)) return;
                         const p7 = d.p7Stats;
@@ -11553,6 +11567,7 @@
                     if (isTestVenueId(set.matchSetup?.venue)) return;
                     if (set.matchSetup?.venue !== venueId) return;
                     if (isDeciding !== null && (set.matchSetup?.gameType === 'deciding') !== isDeciding) return;
+                    if (set.matchState?.weatherAtSetStart?.isEstimatedWind) return;
                     if (!matchesSwingle(set.matchState?.weatherAtSetStart)) return;
                     const setP7 = set.matchState?.p7Stats;
                     if (!setP7) return;
@@ -11708,6 +11723,7 @@
                         // never average them together (isDeciding===null is a permissive
                         // fallback for a caller that hasn't been updated; every current one has).
                         if (isDeciding !== null && (d.gameType === 'deciding') !== isDeciding) return;
+                        if (d.weatherAtSetStart?.isEstimatedWind) return;
                         if (!matchesSwingle(d.weatherAtSetStart)) return;
                         if (competitive && !isCompetitiveSet(d.ourScore, d.theirScore, d.gameType === 'deciding' ? 15 : 21)) return;
                         const p7 = d.p7Stats;
@@ -11725,6 +11741,7 @@
                     if (isTestVenueId(set.matchSetup?.venue)) return;
                     if (set.matchSetup?.orientation !== orientation) return;
                     if (isDeciding !== null && (set.matchSetup?.gameType === 'deciding') !== isDeciding) return;
+                    if (set.matchState?.weatherAtSetStart?.isEstimatedWind) return;
                     if (!matchesSwingle(set.matchState?.weatherAtSetStart)) return;
                     const setP7 = set.matchState?.p7Stats;
                     if (!setP7) return;
