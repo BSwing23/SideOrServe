@@ -2109,7 +2109,9 @@
             if (!LS_CHECKOUT_URL || !currentUser) return;
             const url = LS_CHECKOUT_URL
                 + (LS_CHECKOUT_URL.includes('?') ? '&' : '?')
-                + 'embed=1&checkout[email]=' + encodeURIComponent(currentUser.email || '')
+                + 'embed=1'
+                // Lemon Squeezy rejects a blank email parameter (422), so send it only when known.
+                + (currentUser.email ? '&checkout[email]=' + encodeURIComponent(currentUser.email) : '')
                 + '&checkout[custom][uid]=' + encodeURIComponent(currentUser.uid);
             const open = () => {
                 try {
