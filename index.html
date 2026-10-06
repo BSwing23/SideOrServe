@@ -621,6 +621,28 @@
     <!-- Home Screen -->
     <div id="homeScreen" class="container hidden">
         <img src="logo.png" alt="Side or Serve" style="width: 200px; margin-bottom: 20px; display:block; margin-left:auto; margin-right:auto;">
+
+        <!-- Primary actions first: on a phone this is the first thing a scorer needs -->
+        <div id="returnToMatchBtn" style="display:none;">
+            <button class="btn btn-primary menu-btn" style="background: rgba(152,30,50,0.9); border: 2px solid white;" onclick="returnToLiveMatch()">▶ Return to Live Match</button>
+        </div>
+        <button class="btn btn-primary menu-btn" onclick="showMatchSetup()" style="margin-bottom: 20px;">New Match</button>
+
+        <!-- Scorekeeper invitations addressed to me -->
+        <div id="scorekeeperInvitesCard" class="profile-info" style="margin-top: 20px; display:none;">
+            <h3 style="border: none; margin-top: 0;">📨 Scorekeeper Invitations</h3>
+            <div id="scorekeeperInvitesList"></div>
+        </div>
+
+
+        <!-- Players I can score for -->
+        <div id="scoringForCard" class="profile-info" style="margin-top: 20px; display:none;">
+            <h3 style="border: none; margin-top: 0;">📝 Scoring For</h3>
+            <div style="font-size:0.85em; opacity:0.75; margin-bottom:10px;">Pick a player to set up matches, keep score and see their stats as their scorekeeper.</div>
+            <div id="scoringForList"></div>
+        </div>
+
+
         
         <div class="profile-info">
             <h3 style="border: none; margin-top: 0;">Your Profile</h3>
@@ -659,19 +681,6 @@
             </div>
         </div>
         
-        <!-- Scorekeeper invitations addressed to me -->
-        <div id="scorekeeperInvitesCard" class="profile-info" style="margin-top: 20px; display:none;">
-            <h3 style="border: none; margin-top: 0;">📨 Scorekeeper Invitations</h3>
-            <div id="scorekeeperInvitesList"></div>
-        </div>
-
-        <!-- Players I can score for -->
-        <div id="scoringForCard" class="profile-info" style="margin-top: 20px; display:none;">
-            <h3 style="border: none; margin-top: 0;">📝 Scoring For</h3>
-            <div style="font-size:0.85em; opacity:0.75; margin-bottom:10px;">Pick a player to set up matches, keep score and see their stats as their scorekeeper.</div>
-            <div id="scoringForList"></div>
-        </div>
-
         <!-- My scorekeepers (owner) -->
         <div class="profile-info owner-only" style="margin-top: 20px;">
             <h3 style="border: none; margin-top: 0;">📝 Scorekeepers</h3>
@@ -712,10 +721,6 @@
             </button>
         </div>
         
-        <button class="btn btn-primary menu-btn" onclick="showMatchSetup()">New Match</button>
-        <div id="returnToMatchBtn" style="display:none;">
-            <button class="btn btn-primary menu-btn" style="background: rgba(152,30,50,0.9); border: 2px solid white;" onclick="returnToLiveMatch()">▶ Return to Live Match</button>
-        </div>
         <!-- Admin-only: Team Roster — hidden for all other accounts -->
         <div id="rosterHomeBtn" class="owner-only" style="display:none;">
             <button class="btn btn-secondary menu-btn" onclick="showRosterScreen()">📋 Team Roster</button>
