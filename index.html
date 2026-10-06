@@ -11973,6 +11973,10 @@
             if (!rpsResult) return null;  // No real data yet
 
             const rpsToWin = rpsResult.value;
+            // The serve scenario (win at N-(N-2)) needs N >= 2. N = 1 only happens when every
+            // observed loser scored zero real points (shutouts) — that is too little to say
+            // anything, so treat it as no usable data instead of showing "Infinity%".
+            if (rpsToWin < 2) return null;
             const receivePct   = (rpsToWin / (2 * rpsToWin - 1)) * 100;
             const servePct     = (rpsToWin / (2 * rpsToWin - 2)) * 100;
             const advantagePct = servePct - receivePct;
