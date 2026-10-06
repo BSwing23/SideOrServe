@@ -4286,6 +4286,14 @@
         }
 
         function scorePoint(team) {
+            // Ignore taps once the set is over. The winning point schedules set completion
+            // and the save takes a moment; without this an extra or double tap in that window
+            // adds points past the finish and completes the same set again.
+            if (matchState.setActive === false) return;
+            {
+                const _max = matchState.maxPoints, _a = matchState.ourScore, _b = matchState.theirScore;
+                if ((_a >= _max || _b >= _max) && Math.abs(_a - _b) >= 2) return;
+            }
             // Check if we need to select initial server (Set 2/3 without pre-selection)
             if (needsInitialServerSelection) {
                 promptForInitialServer(team);
@@ -4906,6 +4914,8 @@
         }
         
         async function handleSetComplete(winner, winnerScore, loserScore) {
+            // A set can only be completed once (a duplicate call would double-count it).
+            if (matchState.setActive === false) return;
             // CRITICAL: Save the final segment (current segment never gets switched at end of set)
             if (matchState.currentSegment.ourPoints > 0 || matchState.currentSegment.theirPoints > 0) {
                 // Determine wind component for final segment
