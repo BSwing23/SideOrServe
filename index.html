@@ -5460,7 +5460,10 @@
             // Direct comparison: which standalone advantage is larger?
             // Also apply the priority tree — side only beats receive if Swingle >= 4
             const currentSwingle = matchSetup.weather?.beaufortForce ?? 0;
-            const sideWins = bestAdv > recAdvPts && currentSwingle >= 4;
+            // Receive first is the default; taking a side must be proven AGAINST an observed
+            // receive edge. With no receive data there is nothing to beat, so stay with receive
+            // (same rule as the engine's recommendSide, which requires receiveAdv).
+            const sideWins = !!receiveAdv && bestAdv > recAdvPts && currentSwingle >= 4;
             const winBest = sideWins ? `Take ${preferredStartSideS3} side` : `Receive first`;
 
             const fmt = n => (n >= 0 ? '+' : '') + n.toFixed(1);
