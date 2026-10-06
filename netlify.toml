@@ -1,3 +1,14 @@
+# Legal pages (clean URLs). Must come before the catch-all below.
+[[redirects]]
+  from = "/privacy"
+  to = "/privacy.html"
+  status = 200
+
+[[redirects]]
+  from = "/terms"
+  to = "/terms.html"
+  status = 200
+
 # Public live scores page (clean URLs). Must come before the catch-all below.
 [[redirects]]
   from = "/live"
