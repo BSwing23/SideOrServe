@@ -6565,20 +6565,25 @@
             const sp = swingleBucket?.sidePoints || {};
             const s1 = sp[side1Name?.toLowerCase()] || { scoredHere: 0, scoredThere: 0, segments: 0 };
             const s2 = sp[side2Name?.toLowerCase()] || { scoredHere: 0, scoredThere: 0, segments: 0 };
-            if (s1.segments === 0 && s2.segments === 0) return { hasData: false };
+            const pts1 = (s1.scoredHere || 0) + (s1.scoredThere || 0);
+            const pts2 = (s2.scoredHere || 0) + (s2.scoredThere || 0);
+            if (pts1 === 0 && pts2 === 0) return { hasData: false };
 
-            const avgOurSide1   = s1.segments > 0 ? s1.scoredHere  / s1.segments : 0;
-            const avgTheirSide1 = s1.segments > 0 ? s1.scoredThere / s1.segments : 0;
-            const avgOurSide2   = s2.segments > 0 ? s2.scoredHere  / s2.segments : 0;
-            const avgTheirSide2 = s2.segments > 0 ? s2.scoredThere / s2.segments : 0;
+            // Points share x 7 (see pushSegmentsToSideStats). The stored sums are plain points,
+            // so segment length and short tail segments no longer matter, and sets of both
+            // lengths pool correctly.
+            const avgOurSide1   = pts1 > 0 ? 7 * s1.scoredHere  / pts1 : 0;
+            const avgTheirSide1 = pts1 > 0 ? 7 * s1.scoredThere / pts1 : 0;
+            const avgOurSide2   = pts2 > 0 ? 7 * s2.scoredHere  / pts2 : 0;
+            const avgTheirSide2 = pts2 > 0 ? 7 * s2.scoredThere / pts2 : 0;
 
             return {
                 hasData: true,
                 avgOurSide1, avgTheirSide1, avgOurSide2, avgTheirSide2,
                 p7DiffSide1: avgOurSide1 - avgTheirSide1,
                 p7DiffSide2: avgOurSide2 - avgTheirSide2,
-                side1Segments: s1.segments,
-                side2Segments: s2.segments
+                side1Segments: pts1 > 0 ? Math.max(1, Math.round(pts1 / 7)) : 0,
+                side2Segments: pts2 > 0 ? Math.max(1, Math.round(pts2 / 7)) : 0
             };
         }
 
@@ -8574,10 +8579,13 @@
                 const totalPts = s1pts + s2pts;
                 const s1pct = totalPts > 0 ? (s1pts/totalPts*100).toFixed(1) : '—';
                 const s2pct = totalPts > 0 ? (s2pts/totalPts*100).toFixed(1) : '—';
-                const p7s = d.p7Stats || {};
-                const avg = (arr) => arr?.length > 0 ? (arr.reduce((a,b)=>a+b,0)/arr.length).toFixed(1) : '—';
-                const p7s1our = avg(p7s.side1?.our), p7s1their = avg(p7s.side1?.their);
-                const p7s2our = avg(p7s.side2?.our), p7s2their = avg(p7s.side2?.their);
+                // Points share x unit (7 for P7, 5 for P5) from this set's raw segments.
+                const _unitD = d.gameType === 'deciding' ? 5 : 7;
+                const _d1 = { our: [], their: [], pts: [] }, _d2 = { our: [], their: [], pts: [] };
+                pushSegmentsToSideStats(_d1, _d2, d.completedSegments, d.side1Name, d.p7Stats, _unitD);
+                const _dr1 = sideRate(_d1, _unitD), _dr2 = sideRate(_d2, _unitD);
+                const p7s1our = _dr1.segments > 0 ? _dr1.avgOur.toFixed(1) : '—', p7s1their = _dr1.segments > 0 ? _dr1.avgTheir.toFixed(1) : '—';
+                const p7s2our = _dr2.segments > 0 ? _dr2.avgOur.toFixed(1) : '—', p7s2their = _dr2.segments > 0 ? _dr2.avgTheir.toFixed(1) : '—';
                 const betterSide = s1pts >= s2pts ? s1name : s2name;
                 // Display-only: P5 label for this set if it was a 15-pt (deciding)
                 // set, P7 otherwise.
@@ -9046,8 +9054,8 @@
                 longestRuns: { our: 0, their: 0 },
                 currentRun: { team: null, length: 0 },
                 p7Stats: {
-                    side1: { our: [], their: [] },
-                    side2: { our: [], their: [] }
+                    side1: { our: [], their: [], pts: [] },
+                    side2: { our: [], their: [], pts: [] }
                 },
                 servers: {
                     you: { ps: 0, totalServes: 0, servingTurns: 0, erp: 0 },
@@ -9071,14 +9079,9 @@
                 }
                 aggregated.side1Score += (state.side1Score || 0);
                 aggregated.side2Score += (state.side2Score || 0);
-                // Accumulate p7Stats segment arrays across sets
-                if (state.p7Stats) {
-                    ['side1', 'side2'].forEach(side => {
-                        if (state.p7Stats[side]) {
-                            aggregated.p7Stats[side].our   = aggregated.p7Stats[side].our.concat(state.p7Stats[side].our   || []);
-                            aggregated.p7Stats[side].their = aggregated.p7Stats[side].their.concat(state.p7Stats[side].their || []);
-                        }
-                    });
+                // Accumulate raw segment points across sets (points-weighted P7; see pushSegmentsToSideStats)
+                if (state.completedSegments || state.p7Stats) {
+                    pushSegmentsToSideStats(aggregated.p7Stats.side1, aggregated.p7Stats.side2, state.completedSegments, state.side1Name, state.p7Stats, state.switchInterval);
                 }
                 if (state.longestRuns) {
                     aggregated.longestRuns.our = Math.max(aggregated.longestRuns.our, state.longestRuns.our);
@@ -9102,14 +9105,9 @@
                 aggregated.theirRealPoints += matchState.theirRealPoints;
                 aggregated.side1Score += matchState.side1Score;
                 aggregated.side2Score += matchState.side2Score;
-                // Accumulate live set p7Stats
-                if (matchState.p7Stats) {
-                    ['side1', 'side2'].forEach(side => {
-                        if (matchState.p7Stats[side]) {
-                            aggregated.p7Stats[side].our   = aggregated.p7Stats[side].our.concat(matchState.p7Stats[side].our   || []);
-                            aggregated.p7Stats[side].their = aggregated.p7Stats[side].their.concat(matchState.p7Stats[side].their || []);
-                        }
-                    });
+                // Accumulate live set segments
+                if (matchState.completedSegments || matchState.p7Stats) {
+                    pushSegmentsToSideStats(aggregated.p7Stats.side1, aggregated.p7Stats.side2, matchState.completedSegments, matchState.side1Name, matchState.p7Stats, matchState.switchInterval);
                 }
                 if (matchState.longestRuns) {
                     aggregated.longestRuns.our = Math.max(aggregated.longestRuns.our, matchState.longestRuns.our);
@@ -9972,10 +9970,13 @@
             const s2Pct = total > 0 ? (displayState.side2Score / total * 100).toFixed(1) : '—';
             // P7 this set
             const p7s = displayState.p7Stats;
-            const p7Side1Our   = p7s?.side1?.our?.length   > 0 ? (p7s.side1.our.reduce((a,b)=>a+b,0)   / p7s.side1.our.length).toFixed(1)   : '—';
-            const p7Side1Their = p7s?.side1?.their?.length > 0 ? (p7s.side1.their.reduce((a,b)=>a+b,0) / p7s.side1.their.length).toFixed(1) : '—';
-            const p7Side2Our   = p7s?.side2?.our?.length   > 0 ? (p7s.side2.our.reduce((a,b)=>a+b,0)   / p7s.side2.our.length).toFixed(1)   : '—';
-            const p7Side2Their = p7s?.side2?.their?.length > 0 ? (p7s.side2.their.reduce((a,b)=>a+b,0) / p7s.side2.their.length).toFixed(1) : '—';
+            // Points share x unit (7 for P7, 5 for P5) — see pushSegmentsToSideStats().
+            const _liveUnit = displayState.gameType === 'deciding' ? 5 : 7;
+            const _lr1 = sideRate(p7s?.side1, _liveUnit), _lr2 = sideRate(p7s?.side2, _liveUnit);
+            const p7Side1Our   = _lr1.segments > 0 ? _lr1.avgOur.toFixed(1)   : '—';
+            const p7Side1Their = _lr1.segments > 0 ? _lr1.avgTheir.toFixed(1) : '—';
+            const p7Side2Our   = _lr2.segments > 0 ? _lr2.avgOur.toFixed(1)   : '—';
+            const p7Side2Their = _lr2.segments > 0 ? _lr2.avgTheir.toFixed(1) : '—';
             // Display-only: P5 label for 15-pt (deciding) sets, P7 for 21-pt — same
             // 'normal'/'deciding' distinction calculateFirstSwitchWinPct() already uses.
             const _p7Label = displayState.gameType === 'deciding' ? 'P5' : 'P7';
@@ -10084,8 +10085,10 @@
                     addSetData(d);
                 });
 
-                // Also include in-memory active set from current match
-                if (typeof matchState !== 'undefined' && matchState.completedSegments?.length && matchSetup?.venue) {
+                // Also include in-memory active set from current match — only while it is still
+                // being played. Once a set completes it is saved to Firestore and counted above;
+                // the leftover in-memory copy would count it a second time.
+                if (typeof matchState !== 'undefined' && matchState.setActive === true && matchState.completedSegments?.length && matchSetup?.venue) {
                     addSetData({
                         complete: true,
                         includedInStats: true,
@@ -10188,9 +10191,10 @@
                         // set-type toggle.
                         if ((d.gameType === 'deciding') === (currentSetType === '15')) {
                             segs.forEach(seg => {
-                                if (!sidePoints[seg.side]) sidePoints[seg.side] = { our: 0, their: 0, segments: 0 };
+                                if (!sidePoints[seg.side]) sidePoints[seg.side] = { our: 0, their: 0, segments: 0, pts: 0 };
                                 sidePoints[seg.side].our += seg.ourPoints || 0;
                                 sidePoints[seg.side].their += seg.theirPoints || 0;
+                                sidePoints[seg.side].pts += (seg.ourPoints || 0) + (seg.theirPoints || 0);
                                 sidePoints[seg.side].segments++;
                             });
                         }
@@ -10225,8 +10229,11 @@
                             const sp = sidePoints[side];
                             const oppKey = getOppSide(side);
                             const oppSp = oppKey ? sidePoints[oppKey] : null;
-                            const pooledN = sp.segments + (oppSp ? oppSp.segments : 0);
-                            const pooledP7Val = pooledN > 0 ? (sp.our + (oppSp ? oppSp.their : 0)) / pooledN : null;
+                            // Points share x unit: points scored on this side ÷ points played on it.
+                            const _unitSA = currentSetType === '15' ? 5 : 7;
+                            const pooledPts = sp.pts + (oppSp ? oppSp.pts : 0);
+                            const pooledN = pooledPts > 0 ? Math.max(1, Math.round(pooledPts / _unitSA)) : 0;
+                            const pooledP7Val = pooledPts > 0 ? _unitSA * (sp.our + (oppSp ? oppSp.their : 0)) / pooledPts : null;
                             return `<div class="stat-row"><span>Pooled ${_p7Label}, ${side}, this venue</span><span><strong>${pooledP7Val !== null ? pooledP7Val.toFixed(1) : '—'}</strong>${p7SampleTag(pooledN)}</span></div>`;
                         }).join('')}
                     </div>`;
@@ -10651,8 +10658,9 @@
                     addSetSideData(d);
                 });
 
-                // Also fold in the in-memory active set from the current match
-                if (typeof matchState !== 'undefined' && matchState.completedSegments?.length && matchSetup?.venue) {
+                // Also fold in the in-memory active set from the current match — only while it is
+                // still being played (a finished set is already counted from Firestore).
+                if (typeof matchState !== 'undefined' && matchState.setActive === true && matchState.completedSegments?.length && matchSetup?.venue) {
                     addSetSideData({
                         complete: true,
                         includedInStats: true,
@@ -12328,10 +12336,63 @@
             };
         }
         
+        // ── P7 = POINTS SHARE x 7 ─────────────────────────────────────────────
+        // "Points per 7" for a side = 7 x (points the team scored while on that side ÷
+        // total points played on that side). Equivalent: points ÷ (points played ÷ 7).
+        // It is built from raw segment points, so a short final segment counts only for
+        // the points it actually contains, 21-point (7-pt segment) and 15-point (5-pt
+        // segment) sets measure the same thing, and P5 = P7 x 5/7 holds exactly
+        // (P5 = 5 x share). Segment counts reported alongside are "segment equivalents"
+        // (points played ÷ unit), kept as whole numbers for display and weighting.
+        //
+        // Side stats are {our:[], their:[], pts:[]} — one element per segment holding raw
+        // points scored by us, by them, and total points played in it.
+        function pushSegmentsToSideStats(side1Stats, side2Stats, segments, side1Name, legacyP7, legacyInterval) {
+            const segs = Array.isArray(segments) ? segments : [];
+            let used = false;
+            segs.forEach(seg => {
+                const our = seg.ourPoints || 0, their = seg.theirPoints || 0;
+                const pts = our + their;
+                if (pts <= 0) return;
+                const target = (seg.side === side1Name) ? side1Stats : side2Stats;
+                target.our.push(our); target.their.push(their); (target.pts = target.pts || []).push(pts);
+                used = true;
+            });
+            // Older sets saved without raw segments: fall back to their per-segment arrays,
+            // each assumed to represent one full segment of the set's own length.
+            if (!used && legacyP7?.side1 && legacyP7?.side2) {
+                [['side1', side1Stats], ['side2', side2Stats]].forEach(([k, target]) => {
+                    const our = legacyP7[k].our || [], their = legacyP7[k].their || [];
+                    for (let i = 0; i < Math.min(our.length, their.length); i++) {
+                        target.our.push(our[i]); target.their.push(their[i]); (target.pts = target.pts || []).push(legacyInterval || 7);
+                    }
+                });
+            }
+        }
+
+        // Points-weighted P-rate for one side's stats. unit: 7 for P7, 5 for P5 views.
+        function sideRate(stats, unit) {
+            const our = stats?.our || [], their = stats?.their || [], pts = stats?.pts || [];
+            if (our.length === 0) return { avgOur: 0, avgTheir: 0, segments: 0 };
+            const useWeights = pts.length === our.length;
+            const sumOur = our.reduce((a, b) => a + b, 0);
+            const sumTheir = their.reduce((a, b) => a + b, 0);
+            const sumPts = useWeights ? pts.reduce((a, b) => a + b, 0) : our.length * unit;
+            if (!useWeights) {
+                // legacy arrays with no weights: plain per-segment mean (already in `unit` terms)
+                return { avgOur: sumOur / our.length, avgTheir: sumTheir / our.length, segments: our.length };
+            }
+            return {
+                avgOur: unit * sumOur / sumPts,
+                avgTheir: unit * sumTheir / sumPts,
+                segments: Math.max(1, Math.round(sumPts / unit))
+            };
+        }
+
         // Shared by calculateP7Stats() (live) and calculateHistoricalP7StatsForVenue()
         // (pre-match) — same averaging/differential math, different data source feeding
-        // in the raw side1Stats/side2Stats arrays.
-        function computeP7StatsFromSides(side1Stats, side2Stats) {
+        // in the raw side1Stats/side2Stats.
+        function computeP7StatsFromSides(side1Stats, side2Stats, unit = 7) {
             console.log('[COIN TOSS] Checking P7 stats...');
             console.log('[COIN TOSS] side1Stats:', side1Stats);
             console.log('[COIN TOSS] side2Stats:', side2Stats);
@@ -12342,15 +12403,9 @@
                 return { hasData: false };
             }
 
-            // Calculate averages
-            const avgOurSide1 = side1Stats.our.length > 0 ?
-                side1Stats.our.reduce((a,b) => a+b, 0) / side1Stats.our.length : 0;
-            const avgTheirSide1 = side1Stats.their.length > 0 ?
-                side1Stats.their.reduce((a,b) => a+b, 0) / side1Stats.their.length : 0;
-            const avgOurSide2 = side2Stats.our.length > 0 ?
-                side2Stats.our.reduce((a,b) => a+b, 0) / side2Stats.our.length : 0;
-            const avgTheirSide2 = side2Stats.their.length > 0 ?
-                side2Stats.their.reduce((a,b) => a+b, 0) / side2Stats.their.length : 0;
+            const r1 = sideRate(side1Stats, unit), r2 = sideRate(side2Stats, unit);
+            const avgOurSide1 = r1.avgOur, avgTheirSide1 = r1.avgTheir;
+            const avgOurSide2 = r2.avgOur, avgTheirSide2 = r2.avgTheir;
 
             // P7 differential (your P7 - their P7)
             const p7DiffSide1 = avgOurSide1 - avgTheirSide1;
@@ -12359,7 +12414,7 @@
             console.log('[COIN TOSS] Calculated P7 data:', {
                 avgOurSide1, avgTheirSide1, avgOurSide2, avgTheirSide2,
                 p7DiffSide1, p7DiffSide2,
-                totalSegments: side1Stats.our.length + side2Stats.our.length
+                totalSegments: r1.segments + r2.segments
             });
 
             return {
@@ -12370,38 +12425,29 @@
                 avgTheirSide2: avgTheirSide2,
                 p7DiffSide1: p7DiffSide1,
                 p7DiffSide2: p7DiffSide2,
-                side1Segments: side1Stats.our.length,
-                side2Segments: side2Stats.our.length
+                side1Segments: r1.segments,
+                side2Segments: r2.segments
             };
         }
 
         function calculateP7Stats() {
             // If we're between sets, aggregate P7 data from ALL completed sets
-            let side1Stats, side2Stats;
+            const side1Stats = { our: [], their: [], pts: [] };
+            const side2Stats = { our: [], their: [], pts: [] };
 
             if (matchScore.setsCompleted.length > 0) {
                 // Aggregate data from ALL completed sets
-                side1Stats = { our: [], their: [] };
-                side2Stats = { our: [], their: [] };
-
                 matchScore.setsCompleted.forEach((set, index) => {
-                    const setP7 = set.matchState.p7Stats;
-                    side1Stats.our = side1Stats.our.concat(setP7.side1.our);
-                    side1Stats.their = side1Stats.their.concat(setP7.side1.their);
-                    side2Stats.our = side2Stats.our.concat(setP7.side2.our);
-                    side2Stats.their = side2Stats.their.concat(setP7.side2.their);
+                    const ms = set.matchState;
+                    pushSegmentsToSideStats(side1Stats, side2Stats, ms.completedSegments, ms.side1Name, ms.p7Stats, set.matchSetup?.gameType === 'deciding' ? 5 : 7);
                     console.log(`[COIN TOSS] Added Set ${set.setNumber} data`);
                 });
 
                 console.log('[COIN TOSS] Using aggregated data from', matchScore.setsCompleted.length, 'completed set(s)');
             } else {
                 // Use current match state (during active set)
-                if (!matchState.p7Stats) {
-                    side1Stats = { our: [], their: [] };
-                    side2Stats = { our: [], their: [] };
-                } else {
-                    side1Stats = matchState.p7Stats.side1;
-                    side2Stats = matchState.p7Stats.side2;
+                if (matchState.completedSegments || matchState.p7Stats) {
+                    pushSegmentsToSideStats(side1Stats, side2Stats, matchState.completedSegments, matchState.side1Name, matchState.p7Stats, matchState.switchInterval);
                 }
                 console.log('[COIN TOSS] Using current match state');
             }
@@ -12431,8 +12477,8 @@
         async function calculateHistoricalP7StatsForVenue(venueId, competitive = true, swingleLevel = null, isDeciding = null) {
             if (!venueId) return { hasData: false };
             try {
-                const side1Stats = { our: [], their: [] };
-                const side2Stats = { our: [], their: [] };
+                const side1Stats = { our: [], their: [], pts: [] };
+                const side2Stats = { our: [], their: [], pts: [] };
                 const processedSetIds = new Set();
 
                 const matchesSwingle = (weatherAtSetStart) => {
@@ -12462,13 +12508,9 @@
                         if (d.weatherAtSetStart?.isEstimatedWind) return;
                         if (!matchesSwingle(d.weatherAtSetStart)) return;
                         if (competitive && !isCompetitiveSet(d.ourScore, d.theirScore, d.gameType === 'deciding' ? 15 : 21)) return;
-                        const p7 = d.p7Stats;
-                        if (!p7?.side1 || !p7?.side2) return;
+                        if (!(d.completedSegments?.length) && !(d.p7Stats?.side1 && d.p7Stats?.side2)) return;
                         processedSetIds.add(doc.id);
-                        side1Stats.our   = side1Stats.our.concat(p7.side1.our   || []);
-                        side1Stats.their = side1Stats.their.concat(p7.side1.their || []);
-                        side2Stats.our   = side2Stats.our.concat(p7.side2.our   || []);
-                        side2Stats.their = side2Stats.their.concat(p7.side2.their || []);
+                        pushSegmentsToSideStats(side1Stats, side2Stats, d.completedSegments, d.side1Name, d.p7Stats, d.gameType === 'deciding' ? 5 : 7);
                     });
                 }
 
@@ -12481,15 +12523,12 @@
                     if (isDeciding !== null && (set.matchSetup?.gameType === 'deciding') !== isDeciding) return;
                     if (set.matchState?.weatherAtSetStart?.isEstimatedWind) return;
                     if (!matchesSwingle(set.matchState?.weatherAtSetStart)) return;
-                    const setP7 = set.matchState?.p7Stats;
-                    if (!setP7) return;
-                    side1Stats.our   = side1Stats.our.concat(setP7.side1.our);
-                    side1Stats.their = side1Stats.their.concat(setP7.side1.their);
-                    side2Stats.our   = side2Stats.our.concat(setP7.side2.our);
-                    side2Stats.their = side2Stats.their.concat(setP7.side2.their);
+                    const _ms = set.matchState;
+                    if (!_ms || (!_ms.completedSegments?.length && !_ms.p7Stats)) return;
+                    pushSegmentsToSideStats(side1Stats, side2Stats, _ms.completedSegments, _ms.side1Name, _ms.p7Stats, set.matchSetup?.gameType === 'deciding' ? 5 : 7);
                 });
 
-                return computeP7StatsFromSides(side1Stats, side2Stats);
+                return computeP7StatsFromSides(side1Stats, side2Stats, isDeciding === true ? 5 : 7);
             } catch(e) {
                 console.error('[COIN TOSS] Historical P7 query error:', e);
                 return { hasData: false };
@@ -12512,18 +12551,10 @@
         async function calculateGlobalP7Baseline(competitive = true, isDeciding = null) {
             if (!currentUser) return { hasData: false };
             try {
-                let ourSum = 0, theirSum = 0, segCount = 0;
+                const unit = isDeciding === true ? 5 : 7;
+                const side1Stats = { our: [], their: [], pts: [] };
+                const side2Stats = { our: [], their: [], pts: [] };
                 const processedSetIds = new Set();
-                const accumulate = (sideStats) => {
-                    const our = sideStats?.our || [];
-                    const their = sideStats?.their || [];
-                    const len = Math.min(our.length, their.length);
-                    for (let i = 0; i < len; i++) {
-                        ourSum += our[i];
-                        theirSum += their[i];
-                        segCount++;
-                    }
-                };
 
                 const snapshot = await db.collection('sets')
                     .where('userId', '==', dataUid())
@@ -12534,16 +12565,14 @@
                     if (!d.complete) return;
                     if (d.includedInStats === false) return;
                     if (isTestVenueId(d.venueId)) return;
-                    // 21-pt sets use 7-point segments, 15-pt sets use 5-point segments —
-                    // never average them together (isDeciding===null is a permissive
-                    // fallback for a caller that hasn't been updated; every current one has).
+                    // isDeciding selects which sets feed this view (the 15-point Data view
+                    // shows only 15-point sets); null = every set. Rates are points shares,
+                    // so mixing set types would be valid, but views stay set-type specific.
                     if (isDeciding !== null && (d.gameType === 'deciding') !== isDeciding) return;
                     if (competitive && !isCompetitiveSet(d.ourScore, d.theirScore, d.gameType === 'deciding' ? 15 : 21)) return;
-                    const p7 = d.p7Stats;
-                    if (!p7?.side1 || !p7?.side2) return;
+                    if (!(d.completedSegments?.length) && !(d.p7Stats?.side1 && d.p7Stats?.side2)) return;
                     processedSetIds.add(doc.id);
-                    accumulate(p7.side1);
-                    accumulate(p7.side2);
+                    pushSegmentsToSideStats(side1Stats, side2Stats, d.completedSegments, d.side1Name, d.p7Stats, d.gameType === 'deciding' ? 5 : 7);
                 });
 
                 // Fold in this match's own completed sets not already counted above
@@ -12552,19 +12581,22 @@
                     if (set.setId && processedSetIds.has(set.setId)) return;
                     if (isTestVenueId(set.matchSetup?.venue)) return;
                     if (isDeciding !== null && (set.matchSetup?.gameType === 'deciding') !== isDeciding) return;
-                    const setP7 = set.matchState?.p7Stats;
-                    if (!setP7) return;
-                    accumulate(setP7.side1);
-                    accumulate(setP7.side2);
+                    const ms = set.matchState;
+                    if (!ms || (!ms.completedSegments?.length && !ms.p7Stats)) return;
+                    pushSegmentsToSideStats(side1Stats, side2Stats, ms.completedSegments, ms.side1Name, ms.p7Stats, set.matchSetup?.gameType === 'deciding' ? 5 : 7);
                 });
 
-                if (segCount === 0) return { hasData: false };
+                const r1 = sideRate(side1Stats, unit), r2 = sideRate(side2Stats, unit);
+                const sumPts = [...(side1Stats.pts || []), ...(side2Stats.pts || [])].reduce((a, b) => a + b, 0);
+                if (sumPts === 0) return { hasData: false };
+                const sumOur = [...side1Stats.our, ...side2Stats.our].reduce((a, b) => a + b, 0);
+                const sumTheir = [...side1Stats.their, ...side2Stats.their].reduce((a, b) => a + b, 0);
                 return {
                     hasData: true,
-                    avgOur: ourSum / segCount,
-                    avgTheir: theirSum / segCount,
-                    diff: (ourSum - theirSum) / segCount,
-                    segments: segCount
+                    avgOur: unit * sumOur / sumPts,
+                    avgTheir: unit * sumTheir / sumPts,
+                    diff: unit * (sumOur - sumTheir) / sumPts,
+                    segments: Math.max(1, Math.round(sumPts / unit))
                 };
             } catch (e) {
                 console.error('[COIN TOSS] Global P7 baseline query error:', e);
@@ -12608,8 +12640,8 @@
         async function calculateHistoricalP7StatsByOrientation(orientation, competitive = true, swingleLevel = null, isDeciding = null) {
             if (!orientation) return { hasData: false };
             try {
-                const side1Stats = { our: [], their: [] };
-                const side2Stats = { our: [], their: [] };
+                const side1Stats = { our: [], their: [], pts: [] };
+                const side2Stats = { our: [], their: [], pts: [] };
                 const processedSetIds = new Set();
 
                 const matchesSwingle = (weatherAtSetStart) => {
@@ -12638,13 +12670,9 @@
                         if (d.weatherAtSetStart?.isEstimatedWind) return;
                         if (!matchesSwingle(d.weatherAtSetStart)) return;
                         if (competitive && !isCompetitiveSet(d.ourScore, d.theirScore, d.gameType === 'deciding' ? 15 : 21)) return;
-                        const p7 = d.p7Stats;
-                        if (!p7?.side1 || !p7?.side2) return;
+                        if (!(d.completedSegments?.length) && !(d.p7Stats?.side1 && d.p7Stats?.side2)) return;
                         processedSetIds.add(doc.id);
-                        side1Stats.our   = side1Stats.our.concat(p7.side1.our   || []);
-                        side1Stats.their = side1Stats.their.concat(p7.side1.their || []);
-                        side2Stats.our   = side2Stats.our.concat(p7.side2.our   || []);
-                        side2Stats.their = side2Stats.their.concat(p7.side2.their || []);
+                        pushSegmentsToSideStats(side1Stats, side2Stats, d.completedSegments, d.side1Name, d.p7Stats, d.gameType === 'deciding' ? 5 : 7);
                     });
                 }
 
@@ -12655,15 +12683,12 @@
                     if (isDeciding !== null && (set.matchSetup?.gameType === 'deciding') !== isDeciding) return;
                     if (set.matchState?.weatherAtSetStart?.isEstimatedWind) return;
                     if (!matchesSwingle(set.matchState?.weatherAtSetStart)) return;
-                    const setP7 = set.matchState?.p7Stats;
-                    if (!setP7) return;
-                    side1Stats.our   = side1Stats.our.concat(setP7.side1.our);
-                    side1Stats.their = side1Stats.their.concat(setP7.side1.their);
-                    side2Stats.our   = side2Stats.our.concat(setP7.side2.our);
-                    side2Stats.their = side2Stats.their.concat(setP7.side2.their);
+                    const _ms = set.matchState;
+                    if (!_ms || (!_ms.completedSegments?.length && !_ms.p7Stats)) return;
+                    pushSegmentsToSideStats(side1Stats, side2Stats, _ms.completedSegments, _ms.side1Name, _ms.p7Stats, set.matchSetup?.gameType === 'deciding' ? 5 : 7);
                 });
 
-                return computeP7StatsFromSides(side1Stats, side2Stats);
+                return computeP7StatsFromSides(side1Stats, side2Stats, isDeciding === true ? 5 : 7);
             } catch(e) {
                 console.error('[COIN TOSS] Orientation-based historical P7 query error:', e);
                 return { hasData: false };
