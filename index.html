@@ -5359,12 +5359,15 @@
             const venueId = matchSetup.venue || null;
             const tier = matchSetup.competitionTier || 'NCAA_Pro';
             const swingleLevel = Math.round(matchSetup.weather?.beaufortForce ?? 0);
-            const resolved = await resolveWindConditionedP7Data(venueId, tier, swingleLevel, sides[0], sides[1], true, true);
+            // The engine converts side differentials to P5 itself (x 5/7, switchInterval 5), so
+            // it must be handed P7-unit data: the 21-point pool, NOT 15-point (already P5)
+            // segments, which would be scaled twice. isDeciding=false selects that pool.
+            const resolved = await resolveWindConditionedP7Data(venueId, tier, swingleLevel, sides[0], sides[1], true, false);
             // Pooled side-strength ratios — confidence-graduated fallback (same venue/wind
             // → same wind any venue with this orientation → same venue any wind → thinnest
             // available). See calculatePooledSideRatios() / calculateCoinTossStrategies().
             const orientationS3 = prevSetup.orientation || 'North-South';
-            const pooledSideRatios = await calculatePooledSideRatios(venueId, orientationS3, swingleLevel, true, true);
+            const pooledSideRatios = await calculatePooledSideRatios(venueId, orientationS3, swingleLevel, true, false);
 
             // Build coin toss recommendation from match data
             const strategies = calculateCoinTossStrategies(venueId, {
@@ -11921,7 +11924,12 @@
             }
         }
         
-        function calculateRPsToWin() {
+        function calculateRPsToWin(isDecidingOverride) {
+            // isDecidingOverride (optional): the caller knows which set type it is evaluating.
+            // Needed for the Set 3 setup screen, where matchState/matchSetup still describe
+            // the finished 21-point sets, so the global-state check below would pick the
+            // wrong (21-point) bucket for a 15-point recommendation.
+            const _forceDeciding = (isDecidingOverride === true || isDecidingOverride === false) ? isDecidingOverride : null;
             // Always use all-time average loser RPs from rpStats — never recent set history.
             // Recent sets are too small a sample to set the Points-to-Win baseline reliably.
             if (userProfile?.rpStats) {
@@ -11934,7 +11942,7 @@
                 // guidance pulled the receive advantage from the 21-pt bucket instead of
                 // the 15-pt one, understating the (larger) receive-first advantage that
                 // comes from a smaller RP-to-win target.
-                const isDeciding = matchState?.gameType === 'deciding' || matchSetup?.gameType === 'deciding';
+                const isDeciding = _forceDeciding !== null ? _forceDeciding : (matchState?.gameType === 'deciding' || matchSetup?.gameType === 'deciding');
                 const bucket = isDeciding ? tierStats.sets15 : tierStats.sets21;
                 if (bucket?.losers?.count >= 1) {
                     const avg = bucket.losers.totalRPs / bucket.losers.count;
@@ -11948,7 +11956,7 @@
 
             // No all-time data yet — check current match in-memory sets.
             // Same matchSetup fallback as above (Set 3 setup, matchState still stale).
-            const isDeciding = matchState?.gameType === 'deciding' || matchSetup?.gameType === 'deciding';
+            const isDeciding = _forceDeciding !== null ? _forceDeciding : (matchState?.gameType === 'deciding' || matchSetup?.gameType === 'deciding');
             const inMemorySets = matchScore?.setsCompleted || [];
             let totalRPs = 0, loserCount = 0;
             inMemorySets.forEach(s => {
@@ -11970,8 +11978,8 @@
             return null;
         }
         
-        function calculateReceiveAdvantage() {
-            const rpsResult = calculateRPsToWin();
+        function calculateReceiveAdvantage(isDecidingOverride) {
+            const rpsResult = calculateRPsToWin(isDecidingOverride);
             if (!rpsResult) return null;  // No real data yet
 
             const rpsToWin = rpsResult.value;
@@ -12066,7 +12074,7 @@
                 : (isDeciding ? 28 : 40); // fallback only when zero sets played
 
             // Calculate receive advantage from observed RPs — no arbitrary conversion
-            const receiveAdv = calculateReceiveAdvantage();
+            const receiveAdv = calculateReceiveAdvantage(isDeciding);
             // Point value = percentage difference × observed total points in a set
             const receiveAdvantagePoints = receiveAdv
                 ? (receiveAdv.servePct - receiveAdv.receivePct) / 100 * projectedTotal
@@ -12206,7 +12214,7 @@
             const preferredSide = betterSideName;
 
             // Dynamic receive threshold: (rpsToWin − 1) / rpsToWin
-            const rpsResultCT = calculateRPsToWin();
+            const rpsResultCT = calculateRPsToWin(isDeciding);
             const rpsToWinCT  = rpsResultCT?.value ?? null;
             const receiveFirstAdvantage = rpsToWinCT ? (rpsToWinCT - 1) / rpsToWinCT : null;
 
