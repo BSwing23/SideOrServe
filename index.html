@@ -6500,6 +6500,10 @@
                 if (isTestVenueId(venueId)) return;
                 // Wind picked from a preset (not measured) must never enter the community pool.
                 if (matchState.weatherAtSetStart?.isEstimatedWind) return;
+                // Competitive sets only — the app's one competitive-set rule (isCompetitiveSet).
+                // The pool is stored as running sums, so a lopsided set can't be filtered out
+                // later; it has to be kept out at write time.
+                if (!isCompetitiveSet(matchState.ourScore, matchState.theirScore, matchState.maxPoints)) return;
                 const segments = matchState.completedSegments || [];
                 if (!segments.length) return;
 
@@ -10872,7 +10876,7 @@
                     if (communityRows) {
                         html += `<div style="margin-top:14px;padding-top:10px;border-top:1px solid rgba(255,255,255,0.1);">
                             <div style="font-weight:bold;font-size:0.85em;letter-spacing:0.04em;margin-bottom:2px;">🌐 COMMUNITY DATA — ${pooledTier.replace(/_/g,' ')}</div>
-                            <div style="font-size:0.78em;opacity:0.55;margin-bottom:8px;">Pooled across every Side or Serve subscriber who's logged sets at this venue at this tier, by wind level.</div>
+                            <div style="font-size:0.78em;opacity:0.55;margin-bottom:8px;">Pooled across every Side or Serve subscriber who's logged competitive sets at this venue at this tier, by wind level. Lopsided sets are left out.</div>
                             ${communityRows}
                         </div>`;
                     }
