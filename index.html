@@ -6605,18 +6605,20 @@
         // data captured under the SAME Swingle Scale wind level as right now — "what
         // actually happens on each side when it's this windy here" — over an all-conditions
         // blend. Tries, in order:
-        //   1. This user's own data at this venue at this exact Swingle level — this
-        //      match's sets so far AND past matches, combined. Wind doesn't know or care
-        //      which set a segment came from, only what it actually was at the time, so
-        //      these are one pool, not separate "live" vs "historical" tiers.
-        //   2. Community-pooled data (any subscriber, built-in venues only) at this level
-        //   3. This user's own data at this venue under any wind condition
+        //   1. Same venue, same Swingle level — whichever of these two has MORE observations:
+        //      a. This user's own data (this match's sets so far AND past matches, one pool —
+        //         wind doesn't know or care which set a segment came from).
+        //      b. Community-pooled data (any subscriber, built-in venues only). It already
+        //         contains this user's own sets there, so when it holds more observations it
+        //         is simply the better estimate of the same thing; a team with one set at
+        //         this wind level must not be stuck with that sample while hundreds of
+        //         segments from the same venue sit unused. Ties go to the user's own data.
+        //   2. This user's own data at this venue under any wind condition
         // Returns { p7Data, source } — source is one of 'personal-wind' | 'pooled-wind' |
         // 'personal-any' | 'none', used to label the recommendation honestly in the UI.
         async function resolveWindConditionedP7Data(venueId, tier, swingleLevel, side1Name, side2Name, competitive = true, isDeciding = null) {
             if (venueId) {
                 const personalWind = await calculateHistoricalP7StatsForVenue(venueId, competitive, swingleLevel, isDeciding);
-                if (personalWind.hasData) return { p7Data: personalWind, source: 'personal-wind' };
 
                 // KNOWN GAP (not fixed here — cross-subscriber pooling is explicitly
                 // deferred per standing decision): updatePooledVenueStats()/
@@ -6625,7 +6627,10 @@
                 const pooled = await fetchPooledVenueStats(venueId, tier);
                 const pooledBucket = pooled?.swingle?.['sw' + swingleLevel];
                 const pooledP7 = computeP7StatsFromPooledBucket(pooledBucket, side1Name, side2Name);
-                if (pooledP7.hasData) return { p7Data: pooledP7, source: 'pooled-wind' };
+
+                const segN = p => (p && p.hasData) ? (p.side1Segments || 0) + (p.side2Segments || 0) : 0;
+                if (pooledP7.hasData && segN(pooledP7) > segN(personalWind)) return { p7Data: pooledP7, source: 'pooled-wind' };
+                if (personalWind.hasData) return { p7Data: personalWind, source: 'personal-wind' };
 
                 const personalAny = await calculateHistoricalP7StatsForVenue(venueId, competitive, null, isDeciding);
                 if (personalAny.hasData) return { p7Data: personalAny, source: 'personal-any' };
