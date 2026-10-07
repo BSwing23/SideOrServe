@@ -1356,6 +1356,12 @@
         <p id="paywallBody" style="text-align:center; opacity:0.85; margin-bottom:20px;"></p>
         <div id="paywallMessage" class="info-box hidden" style="text-align:center; margin-bottom:16px;"></div>
         <div id="paywallInvites" class="hidden" style="margin-bottom:16px;"></div>
+        <div id="paywallScorekeeperHint" class="info-box" style="text-align:center; margin-bottom:16px;">
+            <strong>Keeping score for a player or team?</strong> That's free &mdash; no subscription needed.
+            Ask them to invite <span id="paywallMyEmail" style="overflow-wrap:anywhere;"></span> as a scorekeeper
+            (Home &rarr; Scorekeepers &rarr; Add Scorekeeper), then tap the button below.
+            <button class="btn btn-secondary" onclick="paywallRecheckAccess()" style="margin-top:10px;">Check for my invitation</button>
+        </div>
         <div id="paywallVerifyRow" class="hidden">
             <button class="btn btn-primary" onclick="paywallRecheckVerified()">I've verified my email</button>
             <button class="btn btn-secondary" onclick="paywallResendVerification()">Resend verification email</button>
@@ -2079,6 +2085,8 @@
                 ? `We sent a verification link to ${currentUser.email}. Click it, then tap "I've verified my email" for free access.`
                 : 'Your account needs an active subscription to use Side or Serve.';
             loadPaywallInvites();
+            const _myEmail = document.getElementById('paywallMyEmail');
+            if (_myEmail) _myEmail.textContent = currentUser.email || '';
             const msg = document.getElementById('paywallMessage');
             if (reason === 'error') {
                 msg.textContent = "We couldn't check your subscription. Check your connection and tap \"check again\".";
@@ -2096,7 +2104,7 @@
 
         async function paywallRecheckAccess() {
             const result = await checkAccess();
-            if (result.ok) { await enterApp(); } else { showPaywall(result.reason); if (result.reason !== 'error') setPaywallMessage('No active subscription found yet.'); }
+            if (result.ok) { await enterApp(); } else { showPaywall(result.reason); if (result.reason !== 'error') setPaywallMessage('No active subscription or scorekeeper invitation found yet.'); }
         }
 
         async function paywallRecheckVerified() {
@@ -3175,12 +3183,18 @@
         }
 
         function logout() {
-            if (confirm('Are you sure you want to log out?')) {
+            const msg = matchIsInProgress()
+                ? 'A match is in progress. Points are saved as you go, but logging out ends the match on this device. Log out anyway?'
+                : 'Are you sure you want to log out?';
+            if (confirm(msg)) {
                 auth.signOut().then(() => {
                     userProfile = null;
                     actingAs = null;
                     try { sessionStorage.removeItem('sos_actingAs'); } catch (e) {}
                     updateActingAsBanner();
+                    // Fresh start so the next person to sign in on this device (a shared
+                    // iPad) never inherits the previous match or player.
+                    location.reload();
                 });
             }
         }
@@ -7952,9 +7966,15 @@
         // ============================================================
         function inviteByEmail(email, what) {
             const subject = 'Join me on Side or Serve';
-            const body = `Hi,\n\nI'd like to ${what} on Side or Serve, a beach volleyball analytics app.\n\n` +
-                `1) Go to https://sideorservevb.com and create an account with this email address (${email}).\n` +
-                `2) Tell me when you're in and I'll send the request again.\n\nThanks!`;
+            const forScorekeeper = /keep score/.test(what);
+            const body = forScorekeeper
+                ? `Hi,\n\nI'd like you to keep score for me on Side or Serve, a beach volleyball analytics app. It's free for scorekeepers.\n\n` +
+                  `1) Go to https://sideorservevb.com and create an account with this email address (${email}).\n` +
+                  `2) You'll see a screen asking you to subscribe. You do NOT need to. Just tell me you're signed up and I'll send you the scorekeeper invitation.\n` +
+                  `3) Open the app again, tap Accept on the invitation, and you're in.\n\nThanks!`
+                : `Hi,\n\nI'd like to ${what} on Side or Serve, a beach volleyball analytics app.\n\n` +
+                  `1) Go to https://sideorservevb.com and create an account with this email address (${email}).\n` +
+                  `2) Tell me when you're in and I'll send the request again.\n\nThanks!`;
             window.location.href = 'mailto:' + encodeURIComponent(email) + '?subject=' + encodeURIComponent(subject) + '&body=' + encodeURIComponent(body);
         }
 
@@ -7990,7 +8010,7 @@
                     <div style="background: rgba(255,255,255,0.1); padding: 12px; border-radius: 8px; margin-bottom: 8px; display:flex; justify-content:space-between; align-items:center; gap:10px;">
                         <div style="flex:1; min-width:0;">
                             <div style="font-weight:bold;">${escHtml(name || email)}</div>
-                            <div style="font-size:0.85em; opacity:0.8; overflow-wrap:anywhere;">${escHtml(email || '')} ${badge}</div>
+                            <div style="font-size:0.85em; opacity:0.8; overflow-wrap:anywhere;">${name && name !== email ? escHtml(email || '') + ' ' : ''}${badge}</div>
                         </div>
                         ${buttonHtml}
                     </div>`;
@@ -8065,6 +8085,9 @@
                 const me = currentUser.uid;
                 const existing = await db.collection('players').doc(me).collection('scorekeepers').doc(skUid).get();
                 if (existing.exists) { alert('That person is already your scorekeeper.'); closeAddScorekeeperDialog(); return; }
+                // An earlier invitation (declined, or still pending) can't be overwritten by the
+                // owner — only the invitee may update it — so clear it first, then send a fresh one.
+                await db.collection('players').doc(skUid).collection('scorekeeperInvites').doc(me).delete();
                 await db.collection('players').doc(skUid).collection('scorekeeperInvites').doc(me).set({
                     status: 'pending',
                     ownerName: userProfile?.name || currentUser.email,
@@ -8228,7 +8251,11 @@
         }
 
         function matchIsInProgress() {
-            return !!(matchState && matchState.servers && (matchState.ourScore > 0 || matchState.theirScore > 0 || matchScore.setsCompleted.length > 0));
+            const hasData = !!(matchState && matchState.servers && (matchState.ourScore > 0 || matchState.theirScore > 0 || matchScore.setsCompleted.length > 0));
+            // A decided match (best of 3) stays in memory so the Data tab can show it,
+            // but it is finished — it must not block switching players or logging out.
+            const decided = matchScore.yourSetsWon === 2 || matchScore.theirSetsWon === 2;
+            return hasData && !decided;
         }
 
         function updateActingAsBanner() {
@@ -12956,17 +12983,17 @@
             partners.forEach(partner => {
                 const statusBadge = partner.status === 'paired' ? 
                     '<span style="background: rgba(255,255,255,0.15); padding: 4px 8px; border-radius: 5px; font-size: 0.8em;">✓ Paired</span>' :
-                    '<span style="background: #FF9800; padding: 4px 8px; border-radius: 5px; font-size: 0.8em;">Pending</span>';
+                    '<span style="background: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.3); padding: 4px 8px; border-radius: 5px; font-size: 0.8em;">Pending</span>';
                 
                 html += `
                     <div style="background: rgba(255,255,255,0.1); padding: 12px; border-radius: 8px; margin-bottom: 8px;">
                         <div style="display: flex; justify-content: space-between; align-items: center;">
                             <div style="flex: 1;">
                                 <div style="font-weight: bold; margin-bottom: 4px;">
-                                    ${partner.partnerName}
+                                    ${escHtml(partner.partnerName)}
                                 </div>
                                 <div style="font-size: 0.85em; opacity: 0.8;">
-                                    ${partner.partnerEmail || ''}
+                                    ${escHtml(partner.partnerEmail || '')}
                                     ${partner.status === 'paired' ? ` • ${partner.totalMatches || 0} matches` : ''}
                                 </div>
                             </div>
@@ -13037,11 +13064,11 @@
 
                     html += `
                         <div style="background: rgba(255,255,255,0.15); padding: 15px; border-radius: 8px; margin-top: 10px;">
-                            <div style="font-weight: bold; margin-bottom: 5px;">${user.name || 'User'}</div>
-                            <div style="font-size: 0.9em; opacity: 0.8; margin-bottom: 10px;">${user.email}</div>
+                            <div style="font-weight: bold; margin-bottom: 5px;">${escHtml(user.name || 'User')}</div>
+                            <div style="font-size: 0.9em; opacity: 0.8; margin-bottom: 10px;">${escHtml(user.email)}</div>
                             ${found.hasAccess
                                 ? `<div style="font-size:0.85em; margin-bottom:10px;">✓ Active subscriber</div>
-                                   <button class="btn btn-primary" onclick="sendPartnerRequest('${userId}', '${user.name}', '${user.email}')" style="padding: 10px; width: 100%;">
+                                   <button class="btn btn-primary" data-uid="${escHtml(userId)}" data-name="${escHtml(user.name || 'User')}" data-email="${escHtml(user.email)}" onclick="sendPartnerRequest(this.dataset.uid, this.dataset.name, this.dataset.email)" style="padding: 10px; width: 100%;">
                                        Send Partner Request
                                    </button>`
                                 : `<div style="font-size:0.85em; opacity:0.85; margin-bottom:10px;">They have an account but no active subscription yet. A partner needs one to share match data — ask them to subscribe, then search again.</div>
@@ -13272,7 +13299,7 @@
                 
                 partnersSnapshot.docs.forEach(doc => {
                     const partner = doc.data();
-                    options += `<option value="${doc.id}">${partner.partnerName}</option>`;
+                    options += `<option value="${escHtml(doc.id)}">${escHtml(partner.partnerName)}</option>`;
                 });
                 
                 select.innerHTML = options;
