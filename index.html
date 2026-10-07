@@ -2542,6 +2542,7 @@
                     ${historicalP7Data.hasData ? `<div style="font-size:0.78em; opacity:0.55; text-align:center;">${
                         p7Source === 'personal-wind' ? `Based on ${historicalP7Data.side1Segments + historicalP7Data.side2Segments} of your own segments at Swingle ${beaufortLevel} here.` :
                         p7Source === 'pooled-wind'   ? `Based on ${historicalP7Data.side1Segments + historicalP7Data.side2Segments} community-pooled segments at Swingle ${beaufortLevel} here.` :
+                        p7Source === 'pooled-any'    ? `Based on ${historicalP7Data.side1Segments + historicalP7Data.side2Segments} community-pooled segments here across all wind conditions (none yet at Swingle ${beaufortLevel}).` :
                         `Based on ${historicalP7Data.side1Segments + historicalP7Data.side2Segments} of your own segments across all wind conditions here (no data yet at Swingle ${beaufortLevel}).`
                     }</div>` : ''}
                     ${pooledSideRatios?.label ? `<div style="font-size:0.78em; opacity:0.55; text-align:center; margin-top:2px;">Side strength: ${pooledSideRatios.label}</div>` : ''}
@@ -4244,6 +4245,7 @@
                     capturedAt: new Date().toISOString()
                 } : null
             };
+            refreshCommunityCtx();  // fire-and-forget: community numbers for the live displays
             
             document.getElementById('youName').textContent = matchSetup.yourName || userProfile.name;
             document.getElementById('youRole').textContent = `(${matchSetup.roles.player})`;
@@ -5011,6 +5013,7 @@
                 console.log('[STALENESS-DEBUG] handleSetComplete: saveSetToFirestore resolved at', new Date().toISOString(), 'currentSetId=', currentSetId);
                 await updateRPStats();
                 await updatePooledVenueStats();  // best-effort — never throws, see function
+                await refreshCommunityCtx();     // the set just pooled is now part of the community numbers
                 const setData = {
                     setNumber: matchScore.currentSetNumber,
                     winner: winner,
@@ -5427,6 +5430,7 @@
             const p7SourceNote = {
                 'personal-wind': `Your own data at this venue at Swingle ${swingleLevel} (n=${resolved.p7Data.side1Segments + resolved.p7Data.side2Segments} segments).`,
                 'pooled-wind':   `Community-pooled data at Swingle ${swingleLevel} here (n=${resolved.p7Data.side1Segments + resolved.p7Data.side2Segments} segments).`,
+                'pooled-any':    `Community-pooled data here across all wind conditions (none yet at Swingle ${swingleLevel}; n=${resolved.p7Data.side1Segments + resolved.p7Data.side2Segments} segments).`,
                 'personal-any':  `Your own data at this venue, all wind conditions (no Swingle ${swingleLevel} data yet).`
             }[resolved.source] || '';
 
@@ -6499,11 +6503,12 @@
                 const segments = matchState.completedSegments || [];
                 if (!segments.length) return;
 
+                // A set with no captured wind would otherwise be filed under "calm" and pollute that bucket.
+                if (matchState.weatherAtSetStart?.swingleScale == null && matchState.weatherAtSetStart?.beaufortForce == null) return;
                 const tier = matchSetup.competitionTier || 'NCAA_Pro';
                 const swingleLevel = Math.round(
                     matchState.weatherAtSetStart?.swingleScale
                     ?? matchState.weatherAtSetStart?.beaufortForce
-                    ?? 0
                 );
                 const swingleKey = 'sw' + swingleLevel;
 
@@ -6601,37 +6606,113 @@
             };
         }
 
-        // Resolves the best available P7 data for a Coin Toss recommendation, preferring
-        // data captured under the SAME Swingle Scale wind level as right now — "what
-        // actually happens on each side when it's this windy here" — over an all-conditions
-        // blend. Tries, in order:
-        //   1. Same venue, same Swingle level — whichever of these two has MORE observations:
-        //      a. This user's own data (this match's sets so far AND past matches, one pool —
-        //         wind doesn't know or care which set a segment came from).
-        //      b. Community-pooled data (any subscriber, built-in venues only). It already
-        //         contains this user's own sets there, so when it holds more observations it
-        //         is simply the better estimate of the same thing; a team with one set at
-        //         this wind level must not be stuck with that sample while hundreds of
-        //         segments from the same venue sit unused. Ties go to the user's own data.
-        //   2. This user's own data at this venue under any wind condition
-        // Returns { p7Data, source } — source is one of 'personal-wind' | 'pooled-wind' |
-        // 'personal-any' | 'none', used to label the recommendation honestly in the UI.
+        // The venue answer is a COMMUNITY answer: "how does this side at this venue in this
+        // wind perform?" It must not depend on how any one pair has played — a pair's own
+        // sets are already inside the community totals as ordinary observations, and are
+        // never weighted above anyone else's. These helpers read only the pooled venueStats
+        // sums (points scored by the team on each side / by its opponent in the same
+        // segments), summed across Swingle levels when swingleLevel is null.
+        function sumPooledSidePoints(buckets) {
+            const sp = {};
+            buckets.forEach(b => Object.entries(b?.sidePoints || {}).forEach(([side, v]) => {
+                const t = sp[side] || (sp[side] = { scoredHere: 0, scoredThere: 0, segments: 0 });
+                t.scoredHere += v.scoredHere || 0;
+                t.scoredThere += v.scoredThere || 0;
+                t.segments += v.segments || 0;
+            }));
+            return { sidePoints: sp };
+        }
+
+        function isPoolableVenue(venueId) {
+            return !!(venueId && venues[venueId] && !isTestVenueId(venueId));
+        }
+
+        async function communityP7Stats(venueId, tier, swingleLevel, side1Name, side2Name) {
+            if (!isPoolableVenue(venueId)) return { hasData: false };
+            const pooled = await fetchPooledVenueStats(venueId, tier);
+            if (!pooled?.swingle) return { hasData: false };
+            const buckets = swingleLevel === null ? Object.values(pooled.swingle) : [pooled.swingle['sw' + swingleLevel]];
+            const p7 = computeP7StatsFromPooledBucket(sumPooledSidePoints(buckets), side1Name, side2Name);
+            return p7.hasData ? { ...p7, isCommunity: true } : p7;
+        }
+
+        // Same, summed over every built-in venue sharing this court orientation.
+        async function communityP7ByOrientation(orientation, tier, swingleLevel, side1Name, side2Name) {
+            if (!orientation) return { hasData: false };
+            try {
+                const snap = await db.collection('venueStats').get();
+                const buckets = [];
+                snap.docs.forEach(d => {
+                    if (!isPoolableVenue(d.id) || venues[d.id].orientation !== orientation) return;
+                    const swingle = d.data()?.tiers?.[tier]?.swingle || {};
+                    Object.entries(swingle).forEach(([key, b]) => {
+                        if (swingleLevel === null || key === 'sw' + swingleLevel) buckets.push(b);
+                    });
+                });
+                const p7 = computeP7StatsFromPooledBucket(sumPooledSidePoints(buckets), side1Name, side2Name);
+                return p7.hasData ? { ...p7, isCommunity: true } : p7;
+            } catch (e) {
+                console.error('[COMMUNITY P7] Orientation pool error:', e);
+                return { hasData: false };
+            }
+        }
+
+        // calculateCoinTossStrategies() is synchronous, but the community numbers live in
+        // Firestore. The live-match displays that call it with no arguments (Data tab,
+        // weather tab, the recommendation saved on the match record) read this cache, filled
+        // at the start of every set and after every set is pooled, so they answer from the
+        // community data too rather than from one pair's own sets. Keyed by venue, tier,
+        // wind level and set type; a stale key is ignored and the engine falls back to live data.
+        let communityCtxCache = null;
+        function communityCtxKey() {
+            const v = matchSetup?.venue;
+            if (!isPoolableVenue(v)) return null;
+            const deciding = matchScore.setsCompleted.length >= 2 || matchSetup.gameType === 'deciding';
+            return [v, matchSetup.competitionTier || 'NCAA_Pro', Math.round(matchSetup.weather?.beaufortForce ?? 0), deciding ? 'd' : 'n'].join('|');
+        }
+        async function refreshCommunityCtx() {
+            try {
+                const key = communityCtxKey();
+                if (!key) { communityCtxCache = null; return; }
+                const [venueId, tier, sw, kind] = key.split('|');
+                const swingleLevel = Number(sw), deciding = kind === 'd';
+                const orientation = matchSetup.orientation || venues[venueId]?.orientation || 'North-South';
+                const sides = orientation.split('-');
+                const resolved = await resolveWindConditionedP7Data(venueId, tier, swingleLevel, sides[0], sides[1], true, deciding);
+                if (!resolved.p7Data.isCommunity) { communityCtxCache = null; return; }
+                const pooledSideRatios = await calculatePooledSideRatios(venueId, orientation, swingleLevel, true, deciding);
+                communityCtxCache = { key, preMatch: {
+                    historicalP7Data: resolved.p7Data, side1Name: sides[0], side2Name: sides[1], swingleScale: swingleLevel,
+                    gameType: deciding ? 'deciding' : 'normal', switchInterval: deciding ? 5 : 7, pooledSideRatios
+                } };
+            } catch (e) {
+                communityCtxCache = null;
+                console.error('[COMMUNITY CTX] refresh failed:', e);
+            }
+        }
+
+        // Resolves the P7 data behind a Coin Toss recommendation. Tries, in order:
+        //   Built-in venues (community pool exists):
+        //     1. Community pool, this venue, this Swingle level          -> 'pooled-wind'
+        //     2. Community pool, this venue, all Swingle levels combined -> 'pooled-any'
+        //     (nothing else: with no community data the answer is the receive-first
+        //      default — a single pair's own history is never substituted for it)
+        //   Custom venues and test venues (cannot be pooled — the id means a different
+        //   place in each user's list, or the data is not real play):
+        //     1. This user's own data at this venue and Swingle level    -> 'personal-wind'
+        //     2. This user's own data at this venue, any wind            -> 'personal-any'
+        // Returns { p7Data, source }, used to label the recommendation honestly in the UI.
         async function resolveWindConditionedP7Data(venueId, tier, swingleLevel, side1Name, side2Name, competitive = true, isDeciding = null) {
             if (venueId) {
+                if (isPoolableVenue(venueId)) {
+                    const poolWind = await communityP7Stats(venueId, tier, swingleLevel, side1Name, side2Name);
+                    if (poolWind.hasData) return { p7Data: poolWind, source: 'pooled-wind' };
+                    const poolAny = await communityP7Stats(venueId, tier, null, side1Name, side2Name);
+                    if (poolAny.hasData) return { p7Data: poolAny, source: 'pooled-any' };
+                    return { p7Data: { hasData: false }, source: 'none' };
+                }
                 const personalWind = await calculateHistoricalP7StatsForVenue(venueId, competitive, swingleLevel, isDeciding);
-
-                // KNOWN GAP (not fixed here — cross-subscriber pooling is explicitly
-                // deferred per standing decision): updatePooledVenueStats()/
-                // fetchPooledVenueStats() don't split by set type either, so this
-                // pooled-wind path can still mix 21-pt and 15-pt segments together.
-                const pooled = await fetchPooledVenueStats(venueId, tier);
-                const pooledBucket = pooled?.swingle?.['sw' + swingleLevel];
-                const pooledP7 = computeP7StatsFromPooledBucket(pooledBucket, side1Name, side2Name);
-
-                const segN = p => (p && p.hasData) ? (p.side1Segments || 0) + (p.side2Segments || 0) : 0;
-                if (pooledP7.hasData && segN(pooledP7) > segN(personalWind)) return { p7Data: pooledP7, source: 'pooled-wind' };
                 if (personalWind.hasData) return { p7Data: personalWind, source: 'personal-wind' };
-
                 const personalAny = await calculateHistoricalP7StatsForVenue(venueId, competitive, null, isDeciding);
                 if (personalAny.hasData) return { p7Data: personalAny, source: 'personal-any' };
             }
@@ -10875,14 +10956,17 @@
                 // any wind → thinnest available). See calculatePooledSideRatios() /
                 // calculateCoinTossStrategies().
                 pooledSideRatios = await calculatePooledSideRatios(venueId, orientation, swingleLevel, true, _isDecidingForFetch);
-                if (!calculateP7Stats().hasData) {
-                    const resolved = await resolveWindConditionedP7Data(venueId, tier, swingleLevel, sides[0], sides[1], true, _isDecidingForFetch);
+                const resolved = await resolveWindConditionedP7Data(venueId, tier, swingleLevel, sides[0], sides[1], true, _isDecidingForFetch);
+                if (!calculateP7Stats().hasData || resolved.p7Data.isCommunity) {
                     p7Source = resolved.source;
                     preMatch = {
                         historicalP7Data: resolved.p7Data,
                         side1Name: sides[0],
                         side2Name: sides[1],
                         swingleScale: matchSetup.weather?.beaufortForce ?? 0,
+                        // Mid-match, community data still drives the call; tell the engine which kind of set this is.
+                        gameType: _isDecidingForFetch ? 'deciding' : 'normal',
+                        switchInterval: _isDecidingForFetch ? 5 : 7,
                         pooledSideRatios
                     };
                 } else if (pooledSideRatios) {
@@ -10956,12 +11040,14 @@
                 : (isDecidingDisp ? 28 : 40);
             const swingleInt = Math.round(matchSetup.weather?.beaufortForce ?? 0);
             const setsLabel = p7Source !== 'none'
-                ? (p7Source === 'pooled-wind' ? 'Community Data' : 'Historical Data')
+                ? ((p7Source === 'pooled-wind' || p7Source === 'pooled-any') ? 'Community Data' : 'Historical Data')
                 : (matchScore.setsCompleted.length === 1 ? 'Set 1' : 'Sets 1 & 2');
             const p7SourceNote = p7Source === 'personal-wind'
                 ? `Your own segments at Swingle ${swingleInt} here (n=${p7.side1Segments + p7.side2Segments}).`
                 : p7Source === 'pooled-wind'
                 ? `Community-pooled segments at Swingle ${swingleInt} here (n=${p7.side1Segments + p7.side2Segments}).`
+                : p7Source === 'pooled-any'
+                ? `Community-pooled segments here across all wind conditions (n=${p7.side1Segments + p7.side2Segments}) — none yet at Swingle ${swingleInt}.`
                 : p7Source === 'personal-any'
                 ? `Your own segments across all wind conditions here (n=${p7.side1Segments + p7.side2Segments}) — no data yet at Swingle ${swingleInt}.`
                 : '';
@@ -12065,13 +12151,17 @@
         // exists (Set 3 guidance: prefer data matched to the CURRENT wind level over an
         // unconditioned blend of sets 1 & 2, which is what calculateP7Stats() returns).
         function calculateCoinTossStrategies(venueId = null, preMatch = null) {
+            if (!preMatch && !venueId && communityCtxCache && communityCtxCache.key === communityCtxKey()) {
+                venueId = matchSetup.venue;
+                preMatch = communityCtxCache.preMatch;
+            }
             // Calculate P7 (Points Per 7) for each side — prefer live match data;
             // fall back to historical venue data when there's no live match yet, or when
             // the caller explicitly wants wind-conditioned data to override the live blend.
             let p7Data = calculateP7Stats();
             let usingHistorical = false;
 
-            if (venueId && preMatch?.historicalP7Data?.hasData && (!p7Data.hasData || preMatch.preferOverLive)) {
+            if (venueId && preMatch?.historicalP7Data?.hasData && (!p7Data.hasData || preMatch.preferOverLive || preMatch.historicalP7Data.isCommunity)) {
                 p7Data = preMatch.historicalP7Data;
                 usingHistorical = true;
             }
@@ -12153,7 +12243,7 @@
             // SAME side's pooled data cannot cancel across sides this way.
             let decomposedDiffSide1 = p7Data.p7DiffSide1;
             let decomposedDiffSide2 = p7Data.p7DiffSide2;
-            if (preMatch?.pooledSideRatios) {
+            if (preMatch?.pooledSideRatios && !p7Data.isCommunity) {
                 const pr = preMatch.pooledSideRatios;
                 const blendSide = (ownDiff, ownSegs, poolDiff, poolSegs) => {
                     const totalSegs = (ownSegs || 0) + (poolSegs || 0);
@@ -12179,7 +12269,7 @@
             // real observed 5-pt block segments from the current set.
             // Both the baseline (P7×5/7) and live segments are in P5-equivalent units,
             // so blending by segment count is dimensionally consistent.
-            if (isDeciding && matchState.setActive && matchState.gameType === 'deciding') {
+            if (isDeciding && matchState.setActive && matchState.gameType === 'deciding' && !p7Data.isCommunity) {
                 const liveP7 = matchState.p7Stats;
                 const lSegs1 = liveP7?.side1?.our?.length || 0;
                 const lSegs2 = liveP7?.side2?.our?.length || 0;
@@ -12769,26 +12859,50 @@
 
             const segCount = p7 => (p7?.hasData ? (p7.side1Segments + p7.side2Segments) : 0);
             const tiers = [];
-            if (venueId) {
+            if (isPoolableVenue(venueId)) {
+                // Built-in venue: every tier comes from the community pool, never from one
+                // pair's own history (see resolveWindConditionedP7Data()).
+                const poolTier = matchSetup?.competitionTier || 'NCAA_Pro';
+                const [sideA, sideB] = (orientation || venues[venueId]?.orientation || 'North-South').split('-');
                 tiers.push({
                     confidence: 'high',
-                    p7: await calculateHistoricalP7StatsForVenue(venueId, competitive, swingleLevel, isDeciding),
-                    label: n => `Based on ${n} segments at this venue at similar wind conditions (high confidence).`
+                    p7: await communityP7Stats(venueId, poolTier, swingleLevel, sideA, sideB),
+                    label: n => `Community data: ${n} segments at this venue at similar wind conditions (high confidence).`
                 });
-            }
-            if (orientation) {
-                tiers.push({
-                    confidence: 'medium',
-                    p7: await calculateHistoricalP7StatsByOrientation(orientation, competitive, swingleLevel, isDeciding),
-                    label: n => `Based on ${n} segments at similar wind conditions across ${orientation} venues (medium confidence).`
-                });
-            }
-            if (venueId) {
+                if (orientation) {
+                    tiers.push({
+                        confidence: 'medium',
+                        p7: await communityP7ByOrientation(orientation, poolTier, swingleLevel, sideA, sideB),
+                        label: n => `Community data: ${n} segments at similar wind conditions across ${orientation} venues (medium confidence).`
+                    });
+                }
                 tiers.push({
                     confidence: 'low',
-                    p7: await calculateHistoricalP7StatsForVenue(venueId, competitive, null, isDeciding),
-                    label: n => `Based on ${n} segments at this venue, mixed wind conditions (low confidence).`
+                    p7: await communityP7Stats(venueId, poolTier, null, sideA, sideB),
+                    label: n => `Community data: ${n} segments at this venue, mixed wind conditions (low confidence).`
                 });
+            } else {
+                if (venueId) {
+                    tiers.push({
+                        confidence: 'high',
+                        p7: await calculateHistoricalP7StatsForVenue(venueId, competitive, swingleLevel, isDeciding),
+                        label: n => `Based on ${n} segments at this venue at similar wind conditions (high confidence).`
+                    });
+                }
+                if (orientation) {
+                    tiers.push({
+                        confidence: 'medium',
+                        p7: await calculateHistoricalP7StatsByOrientation(orientation, competitive, swingleLevel, isDeciding),
+                        label: n => `Based on ${n} segments at similar wind conditions across ${orientation} venues (medium confidence).`
+                    });
+                }
+                if (venueId) {
+                    tiers.push({
+                        confidence: 'low',
+                        p7: await calculateHistoricalP7StatsForVenue(venueId, competitive, null, isDeciding),
+                        label: n => `Based on ${n} segments at this venue, mixed wind conditions (low confidence).`
+                    });
+                }
             }
 
             let chosen = tiers.find(t => segCount(t.p7) >= MIN_SEGMENTS_FOR_SIDE_RATIO_CONFIDENCE);
