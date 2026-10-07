@@ -1062,7 +1062,7 @@
             <!-- Populated dynamically -->
         </div>
         
-        <div id="sideSwitchNotice" class="hidden" style="position: fixed; top: 80px; left: 50%; transform: translateX(-50%); z-index: 1000; background: rgba(255,152,0,0.95); padding: 15px 30px; border-radius: 10px; box-shadow: 0 4px 12px rgba(0,0,0,0.3); text-align: center; font-weight: bold; animation: slideDown 0.3s ease;">
+        <div id="sideSwitchNotice" class="hidden" style="position: fixed; top: 80px; left: 50%; transform: translateX(-50%); z-index: 1000; background: rgba(152,30,50,0.97); border: 2px solid rgba(255,255,255,0.85); color: white; padding: 15px 30px; border-radius: 10px; box-shadow: 0 4px 12px rgba(0,0,0,0.3); text-align: center; font-weight: bold; animation: slideDown 0.3s ease;">
             🔄 <strong>SIDE SWITCH!</strong> Now on <span id="newSideText">South Side</span>
         </div>
         
@@ -8099,7 +8099,7 @@
                 const row = (name, email, badge, buttonHtml) => `
                     <div style="background: rgba(255,255,255,0.1); padding: 12px; border-radius: 8px; margin-bottom: 8px; display:flex; justify-content:space-between; align-items:center; gap:10px;">
                         <div style="flex:1; min-width:0;">
-                            <div style="font-weight:bold;">${escHtml(name || email)}</div>
+                            <div style="font-weight:bold; overflow-wrap:anywhere;">${escHtml(name || email)}</div>
                             <div style="font-size:0.85em; opacity:0.8; overflow-wrap:anywhere;">${name && name !== email ? escHtml(email || '') + ' ' : ''}${badge}</div>
                         </div>
                         ${buttonHtml}
@@ -8263,6 +8263,9 @@
                 const invites = await getPendingScorekeeperInvites();
                 box.classList.toggle('hidden', !invites.length);
                 box.innerHTML = invites.map(i => pendingInviteRowHtml(i, true)).join('');
+                // The "ask them to invite you" note is only needed while no invitation is waiting.
+                const hint = document.getElementById('paywallScorekeeperHint');
+                if (hint) hint.classList.toggle('hidden', invites.length > 0);
             } catch (error) {
                 box.classList.add('hidden');
             }
@@ -10813,7 +10816,7 @@
                 const pairs = [['north','south'], ['east','west']];
                 let html = `<div class="stat-box"><h3>🧭 SIDE BIAS — ${venueName.toUpperCase()}</h3>
                     <div style="font-size:0.8em;opacity:0.6;margin-bottom:2px;">Total points scored on each side regardless of team — pure court/wind/sun data for this venue.</div>
-                    <div style="font-size:0.78em;opacity:0.5;font-style:italic;margin-bottom:10px;">Includes all sets played here, including blowouts — not filtered by Competitive Sets Only.</div>`;
+                    <div style="font-size:0.78em;opacity:0.5;font-style:italic;margin-bottom:10px;">Your own sets here include blowouts — this raw total is not filtered by Competitive Sets Only.</div>`;
 
                 let anyPair = false;
                 pairs.forEach(([a, b]) => {
