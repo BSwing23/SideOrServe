@@ -47,12 +47,25 @@ exports.handler = async (event) => {
 
   const snap = await admin.firestore().collection("players").where("email", "==", email).limit(5).get();
   const users = [];
-  for (const d of snap.docs) {
-    if (d.id === caller.uid) continue;
-    const user = { uid: d.id, name: d.data().name || "User", email };
+  const add = async (uid, name) => {
+    if (uid === caller.uid) return;
+    const user = { uid, name: name || email.split("@")[0], email };
     // Scorekeepers don't need their own subscription; partners do.
-    if (purpose === "partner") user.hasAccess = (await accountHasAccess(d.id)).ok;
+    if (purpose === "partner") user.hasAccess = (await accountHasAccess(uid)).ok;
     users.push(user);
+  };
+  for (const d of snap.docs) await add(d.id, d.data().name || "User");
+
+  // A new scorekeeper signs up and lands on the paywall before they can create a
+  // profile, so there is no players doc to match yet. Fall back to the sign-in
+  // account itself (also covers an email stored with different capitalisation).
+  if (!users.length) {
+    try {
+      const authUser = await admin.auth().getUserByEmail(email);
+      await add(authUser.uid, authUser.displayName);
+    } catch (e) {
+      if (e.code !== "auth/user-not-found") console.error("Auth lookup failed:", e.message);
+    }
   }
   return json(200, { users });
 };
