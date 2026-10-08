@@ -10480,6 +10480,31 @@
             return `<div class="stat-box"><h3>⚔️ ROLE BATTLE</h3>${liveSection}${histSection}</div>`;
         }
         
+        // Team-level serve/receive percentages from the same per-player serve counts the player
+        // rows use. PS% = rallies the team won on its own serve / rallies it served.
+        // SO% (side-out %) = rallies the team won while receiving / rallies it received. Every
+        // rally the other team serves is a rally this team receives, so a team's SO% is
+        // 1 - the other team's PS%. Team numbers only: the app records who served, not who received.
+        function teamServeReceiveStats(you, partner, opp1, opp2) {
+            const sum = (a, b) => ({ ps: (a?.ps || 0) + (b?.ps || 0), serves: (a?.totalServes || 0) + (b?.totalServes || 0) });
+            const ours = sum(you, partner), theirs = sum(opp1, opp2);
+            const pct = (n, d) => d > 0 ? Math.round(n / d * 100) : null;
+            return {
+                you:  { psPct: pct(ours.ps, ours.serves),     soPct: pct(theirs.serves - theirs.ps, theirs.serves) },
+                them: { psPct: pct(theirs.ps, theirs.serves), soPct: pct(ours.serves - ours.ps, ours.serves) }
+            };
+        }
+
+        function teamServeReceiveRowsHtml(t, yourLabel, theirLabel) {
+            const v = x => x !== null ? x + '%' : '—';
+            const row = (label, r) => `<div class="stat-row" style="background:rgba(255,255,255,0.10);">
+                    <span><strong>${label}</strong> <span style="opacity:0.6;font-size:0.85em;">(team)</span></span>
+                    <span style="font-size:0.9em;">PS%: <strong>${v(r.psPct)}</strong> &nbsp; SO%: <strong>${v(r.soPct)}</strong></span>
+                </div>`;
+            return row(yourLabel, t.you) + row(theirLabel, t.them) +
+                `<div style="font-size:0.75em;opacity:0.55;padding:4px 2px 0;">PS% = rallies won on serve &middot; SO% (side-out) = rallies won while receiving</div>`;
+        }
+
         // ── SECTION 6a: Live Server Section ─────────────────────────────────
         function buildLiveServerSection(displayState, displaySetup) {
             if (!displayState || !displaySetup) return '';
@@ -10499,7 +10524,9 @@
                     <span>PS:<strong>${s.ps}</strong> &nbsp;P/S:<strong>${ps}</strong> &nbsp;P/T:<strong>${s.erp?.toFixed(2)||'0.00'}</strong></span>
                 </div>`;
             }).join('');
-            return `<div class="stat-box"><h3>📈 SERVER PERFORMANCE</h3>${rowsHTML}</div>`;
+            const sv = displayState.servers;
+            const teamRows = teamServeReceiveRowsHtml(teamServeReceiveStats(sv.you, sv.partner, sv.opp1, sv.opp2), 'Your team', 'Their team');
+            return `<div class="stat-box"><h3>📈 SERVER PERFORMANCE</h3>${rowsHTML}${teamRows}</div>`;
         }
         
         // ── SECTION 6b: Historical Server Performance (Today/All Time) ───────
@@ -10517,6 +10544,7 @@
 
                 const setTypeFilter = currentSetType === '15' ? 'deciding' : 'regular';
                 const playerStats = {};
+                const teamAcc = { you: { ps: 0, totalServes: 0 }, opp: { ps: 0, totalServes: 0 } };
                 const addPlayer = (name, role, serverData) => {
                     if (!name || !serverData) return;
                     if (!playerStats[name]) playerStats[name] = { role, ps: 0, serves: 0, turns: 0, sets: 0 };
@@ -10546,6 +10574,8 @@
                     addPlayer(d.partnerName, d.partnerRole, d.serverStats.partner);
                     addPlayer('Opponents', null, d.serverStats.opp1);
                     addPlayer('Opponents', null, d.serverStats.opp2);
+                    [d.serverStats.you, d.serverStats.partner].forEach(x => { teamAcc.you.ps += x?.ps || 0; teamAcc.you.totalServes += x?.totalServes || 0; });
+                    [d.serverStats.opp1, d.serverStats.opp2].forEach(x => { teamAcc.opp.ps += x?.ps || 0; teamAcc.opp.totalServes += x?.totalServes || 0; });
                 });
 
                 if (Object.keys(playerStats).length === 0) return `<div class="stat-box"><h3>📈 SERVER PERFORMANCE</h3><div style="opacity:0.5;font-size:0.9em;padding:6px 0;">No server data yet for ${currentSetType}-point sets.</div></div>`;
@@ -10577,7 +10607,8 @@
                     </div>`;
                 }).join('');
 
-                return `<div class="stat-box"><h3>📈 SERVER PERFORMANCE</h3>${sampleDisclaimer(Object.values(playerStats)[0]?.sets || 0)}${rows}</div>`;
+                const teamRows = teamServeReceiveRowsHtml(teamServeReceiveStats(teamAcc.you, null, teamAcc.opp, null), 'Your team', 'Opponents');
+                return `<div class="stat-box"><h3>📈 SERVER PERFORMANCE</h3>${sampleDisclaimer(Object.values(playerStats)[0]?.sets || 0)}${rows}${teamRows}</div>`;
             } catch(e) {
                 console.error('[DATA] Server perf error:', e);
                 return '';
