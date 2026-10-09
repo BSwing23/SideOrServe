@@ -2082,7 +2082,7 @@
             document.getElementById('paywallSubscribeRow').classList.toggle('hidden', false);
             document.getElementById('paywallTitle').textContent = needsVerify ? 'Verify your school email' : 'Subscribe to Side or Serve';
             document.getElementById('paywallBody').textContent = needsVerify
-                ? `We sent a verification link to ${currentUser.email}. Click it, then tap "I've verified my email" for free access.`
+                ? `We sent a verification link to ${currentUser.email} from noreply@gasa-beach.firebaseapp.com. Click it, then tap "I've verified my email" for free access. School mail filters often hold it: check Junk and Quarantine, and wait a few minutes before resending. Still nothing? Email brian@gasavb.com for help.`
                 : 'Your account needs an active subscription to use Side or Serve.';
             loadPaywallInvites();
             const _myEmail = document.getElementById('paywallMyEmail');
@@ -2115,7 +2115,7 @@
         async function paywallResendVerification() {
             try {
                 await currentUser.sendEmailVerification();
-                setPaywallMessage('Verification email sent. Check your inbox (and spam).');
+                setPaywallMessage('Verification email sent from noreply@gasa-beach.firebaseapp.com. Check Junk and Quarantine too; school filters can take a few minutes.');
             } catch (error) {
                 setPaywallMessage(error.code === 'auth/too-many-requests' ? 'Please wait a minute before requesting another email.' : 'Could not send the email. Try again shortly.');
             }
