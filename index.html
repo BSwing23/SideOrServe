@@ -1390,6 +1390,17 @@
             <p style="text-align:center; opacity:0.7; padding:20px 0;">Loading...</p>
         </div>
 
+        <div class="stat-box" id="announcerLinksBox" style="margin-top:18px;">
+            <h3>🎙️ Announcer links</h3>
+            <div style="font-size:0.85em; opacity:0.7; margin-bottom:10px;">On-Air Numbers are private. Create a link for an announcer or broadcaster; anyone with it sees the numbers for that venue until it expires or you revoke it. The live scores page stays public.</div>
+            <select id="announcerVenue" style="width:100%; padding:8px 10px; border-radius:6px; background:rgba(255,255,255,0.10); color:white; border:1px solid rgba(255,255,255,0.25); margin-bottom:8px;"></select>
+            <input id="announcerLabel" type="text" placeholder="Who is it for? (e.g. ESPN announcer)" style="width:100%; padding:10px; border-radius:6px; border:none; margin-bottom:8px; box-sizing:border-box;">
+            <input id="announcerDays" type="number" min="1" max="365" value="3" placeholder="Days until it expires" style="width:100%; padding:10px; border-radius:6px; border:none; margin-bottom:8px; box-sizing:border-box;">
+            <button class="btn btn-secondary" onclick="createAnnouncerLink()" style="width:100%;">Create link</button>
+            <div id="announcerNewLink" style="margin-top:10px;"></div>
+            <div id="announcerLinksList" style="margin-top:12px;"></div>
+        </div>
+
         <button class="btn btn-secondary" onclick="showHomeScreen()" style="margin-top:16px;">Back to Home</button>
     </div>
 
@@ -1402,10 +1413,12 @@
         <select id="boardVenueSelect" onchange="boardSetVenue(this.value)" style="width:100%; max-width:420px; padding:8px 10px; border-radius:6px; background:rgba(255,255,255,0.10); color:white; border:1px solid rgba(255,255,255,0.25); font-size:0.9em; margin:6px 0 14px;"></select>
         <div id="boardCards"></div>
 
+        <div id="boardOnAir" style="display:none;">
         <h2 style="margin:24px 0 6px;">🎙️ On-Air Numbers</h2>
         <div style="font-size:0.8em; opacity:0.65; margin-bottom:10px;">Anonymous totals from every completed set scored here. Small samples are flagged.</div>
         <div id="boardWindowButtons" style="display:flex; gap:5px; margin-bottom:12px;"></div>
         <div id="boardInsights"><p style="opacity:0.7;">Loading…</p></div>
+        </div>
     </div>
 
     <!-- Team Roster Screen (Admin Only) -->
@@ -1466,6 +1479,8 @@
         // Live Board mode: index.html?board=<venueId> is a public, login-free page.
         const BOARD_MODE = new URLSearchParams(location.search).has('board');
         const BOARD_VENUE_PARAM = new URLSearchParams(location.search).get('board') || '';
+        // On-Air Numbers are not public: they show only for a valid announcer link (&key=...), checked server-side.
+        const BOARD_KEY = new URLSearchParams(location.search).get('key') || '';
 
         // Scorekeeper mode: a scorekeeper "acts as" the player who invited them. While
         // actingAs is set, userProfile holds THAT player's profile and every data read/
@@ -7718,6 +7733,83 @@
             hideAllScreens();
             document.getElementById('insightsScreen').classList.remove('hidden');
             loadInsights();
+            loadAnnouncerLinks();
+        }
+
+        // ── Announcer links (admin): private keys that unlock a venue's On-Air Numbers ──
+        async function announcerApi(payload) {
+            const idToken = await currentUser.getIdToken();
+            const resp = await fetch('/.netlify/functions/announcer-links', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + idToken },
+                body: JSON.stringify(payload)
+            });
+            const data = await resp.json().catch(() => ({}));
+            if (!resp.ok) throw new Error(data.error || ('HTTP ' + resp.status));
+            return data;
+        }
+
+        async function loadAnnouncerLinks() {
+            if (!isAdmin()) return;
+            const sel = document.getElementById('announcerVenue');
+            if (sel && !sel.options.length) {
+                sel.innerHTML = '<option value="*">All venues</option>' + getVenueEntriesForDropdown()
+                    .filter(([k, v]) => !v.isTestVenue).map(([k, v]) => `<option value="${escHtml(k)}">${escHtml(v.name)}</option>`).join('');
+                sel.value = 'manhattan-beach-ca';
+            }
+            const list = document.getElementById('announcerLinksList');
+            try {
+                const { links } = await announcerApi({ action: 'list' });
+                const now = Date.now();
+                list.innerHTML = links.length ? links.map(l => {
+                    const expired = l.expiresAt && l.expiresAt < now;
+                    const status = l.revoked ? 'Revoked' : expired ? 'Expired' : 'Active until ' + new Date(l.expiresAt).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+                    const where = (l.venues || []).map(v => v === '*' ? 'All venues' : (venues[v]?.name || v)).join(', ');
+                    return `<div style="background:rgba(255,255,255,0.08); border-radius:8px; padding:10px 12px; margin-bottom:6px; display:flex; justify-content:space-between; align-items:center; gap:10px;">
+                        <div style="min-width:0; flex:1;"><div style="font-weight:bold; overflow-wrap:anywhere;">${escHtml(l.label)}</div>
+                        <div style="font-size:0.8em; opacity:0.75; overflow-wrap:anywhere;">${escHtml(where)} · ${escHtml(status)} · key ${escHtml(l.keyPrefix || '')}…</div></div>
+                        ${(!l.revoked && !expired) ? `<button onclick="revokeAnnouncerLink('${escHtml(l.id)}')" style="background:rgba(0,0,0,0.2); border:1px solid white; color:white; padding:5px 10px; border-radius:5px; cursor:pointer; font-size:0.85em; flex-shrink:0;">Revoke</button>` : ''}
+                    </div>`;
+                }).join('') : '<div style="opacity:0.6; font-size:0.9em;">No links yet.</div>';
+            } catch (e) {
+                console.error('[ANNOUNCER] list failed:', e);
+                list.innerHTML = '<div style="opacity:0.7; font-size:0.9em;">Could not load links.</div>';
+            }
+        }
+
+        async function createAnnouncerLink() {
+            if (!isAdmin()) return;
+            const out = document.getElementById('announcerNewLink');
+            try {
+                const r = await announcerApi({
+                    action: 'create',
+                    venue: document.getElementById('announcerVenue').value,
+                    label: document.getElementById('announcerLabel').value,
+                    days: document.getElementById('announcerDays').value
+                });
+                out.innerHTML = `<div style="background:rgba(255,255,255,0.12); border-radius:8px; padding:12px;">
+                    <div style="font-weight:bold; margin-bottom:6px;">Link for ${escHtml(r.label)}. Copy it now: it is not shown again.</div>
+                    <input id="announcerNewLinkField" type="text" readonly value="${escHtml(r.url)}" onclick="this.select()" style="width:100%; padding:8px; border-radius:6px; border:none; box-sizing:border-box; font-size:0.85em;">
+                    <button class="btn btn-secondary" onclick="copyAnnouncerLink()" style="width:100%; margin-top:8px;">Copy link</button>
+                </div>`;
+                document.getElementById('announcerLabel').value = '';
+                loadAnnouncerLinks();
+            } catch (e) {
+                out.innerHTML = '<div style="opacity:0.85;">Could not create the link: ' + escHtml(e.message) + '</div>';
+            }
+        }
+
+        function copyAnnouncerLink() {
+            const f = document.getElementById('announcerNewLinkField');
+            if (!f) return;
+            f.select();
+            (navigator.clipboard ? navigator.clipboard.writeText(f.value) : Promise.reject()).then(() => alert('Link copied.'), () => { try { document.execCommand('copy'); alert('Link copied.'); } catch (e) {} });
+        }
+
+        async function revokeAnnouncerLink(id) {
+            if (!isAdmin() || !confirm('Revoke this link? It stops working immediately.')) return;
+            try { await announcerApi({ action: 'revoke', id }); } catch (e) { alert('Could not revoke: ' + e.message); }
+            loadAnnouncerLinks();
         }
 
         async function loadInsights() {
@@ -7908,7 +8000,8 @@
         function boardSetVenue(venueId) {
             _boardVenue = venueId;
             document.getElementById('boardVenueName').textContent = venues[venueId]?.name || 'Live Board';
-            try { history.replaceState(null, '', '?board=' + encodeURIComponent(venueId)); } catch (e) {}
+            try { history.replaceState(null, '', '?board=' + encodeURIComponent(venueId) + (BOARD_KEY ? '&key=' + encodeURIComponent(BOARD_KEY) : '')); } catch (e) {}
+            const _onAir = document.getElementById('boardOnAir'); if (_onAir) _onAir.style.display = 'none';
             if (_boardUnsub) { _boardUnsub(); _boardUnsub = null; }
             _boardDocs = {};
             renderBoardCards();
@@ -7998,13 +8091,15 @@
 
         async function loadBoardInsights() {
             const box = document.getElementById('boardInsights');
-            if (!box || !_boardVenue) return;
+            if (!box || !_boardVenue || !BOARD_KEY) return;
             if (isTestVenueId(_boardVenue)) {
                 box.innerHTML = '<p style="opacity:0.7;">This is a test venue — its matches are never counted, so there are no on-air numbers.</p>';
                 return;
             }
             try {
-                const resp = await fetch('/.netlify/functions/venue-insights?venue=' + encodeURIComponent(_boardVenue) + '&since=' + boardWindowSince());
+                const resp = await fetch('/.netlify/functions/venue-insights?venue=' + encodeURIComponent(_boardVenue) + '&since=' + boardWindowSince() + '&key=' + encodeURIComponent(BOARD_KEY));
+                if (resp.status === 403) { document.getElementById('boardOnAir').style.display = 'none'; return; }
+                document.getElementById('boardOnAir').style.display = 'block';
                 if (!resp.ok) throw new Error('HTTP ' + resp.status);
                 renderBoardInsights(await resp.json());
             } catch (error) {

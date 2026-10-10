@@ -95,6 +95,9 @@
     const pathVenue = (location.pathname.match(/^\/live\/([a-z0-9-]+)/) || [])[1] || '';
     const queryVenue = new URLSearchParams(location.search).get('venue') || '';
     let venue = pathVenue || queryVenue;
+    // On-Air Numbers are not public: they appear only for a valid announcer link (?key=...).
+    // The server checks the key; the page just passes it along and shows the section on success.
+    const KEY = new URLSearchParams(location.search).get('key') || '';
 
     let docs = {};
     let unsub = null;
@@ -132,10 +135,10 @@
 
     function setVenue(v) {
         venue = v;
-        try { history.replaceState(null, '', v ? '/live/' + v : '/live'); } catch (e) {}
-        $('onair').style.display = v ? 'block' : 'none';
+        try { history.replaceState(null, '', (v ? '/live/' + v : '/live') + (KEY ? '?key=' + encodeURIComponent(KEY) : '')); } catch (e) {}
+        $('onair').style.display = 'none';
         subscribe();
-        if (v) loadInsights();
+        if (v && KEY) loadInsights();
         renderTitle();
     }
 
@@ -210,10 +213,12 @@
     function setWin(k) { win = k; renderWindows(); loadInsights(); }
 
     async function loadInsights() {
-        if (!venue) return;
+        if (!venue || !KEY) return;
         const box = $('insights');
         try {
-            const resp = await fetch('/.netlify/functions/venue-insights?venue=' + encodeURIComponent(venue) + '&since=' + since());
+            const resp = await fetch('/.netlify/functions/venue-insights?venue=' + encodeURIComponent(venue) + '&since=' + since() + '&key=' + encodeURIComponent(KEY));
+            if (resp.status === 403) { $('onair').style.display = 'none'; return; }
+            $('onair').style.display = 'block';
             if (resp.status === 400) { box.innerHTML = '<p class="small">This is a test venue — its matches are never counted, so there are no on-air numbers.</p>'; return; }
             if (!resp.ok) throw new Error('HTTP ' + resp.status);
             renderInsights(await resp.json());
@@ -260,12 +265,12 @@
     });
 
     renderWindows();
-    $('onair').style.display = venue ? 'block' : 'none';
+    $('onair').style.display = 'none';
     renderTitle();
     subscribe();
-    if (venue) loadInsights();
+    if (venue && KEY) loadInsights();
     setInterval(renderCards, 15000);          // age badges (NO RECENT UPDATE / FINAL fade-out)
-    setInterval(() => { if (venue) loadInsights(); }, 60000);
+    setInterval(() => { if (venue && KEY) loadInsights(); }, 60000);
 </script>
 </body>
 </html>

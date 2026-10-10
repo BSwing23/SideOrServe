@@ -1,13 +1,18 @@
 /* =========================================================
-   Side or Serve — venue on-air numbers (public, anonymous)
+   Side or Serve — venue on-air numbers (announcer link required)
    ---------------------------------------------------------
    Feeds the live board's "On-Air Numbers". Aggregates every completed set
    scored at one venue (all accounts) inside a time window and returns only
    counts and percentages — no names, emails, ids or per-set records.
+
+   These numbers are NOT public. A caller needs either a valid announcer key
+   (?key=..., created by the admin in the app; only its SHA-256 hash is stored in
+   announcerKeys/{hash}) or the admin's own sign-in. Anyone else gets 403.
    ========================================================= */
 
 const admin = require("firebase-admin");
-const { init } = require("./lib/access");
+const crypto = require("crypto");
+const { init, ADMIN_EMAIL } = require("./lib/access");
 const TEST_VENUES = require("./lib/testVenues");
 
 const THIN_N = 10;
@@ -17,7 +22,7 @@ const cap = (s) => s.charAt(0).toUpperCase() + s.slice(1);
 
 const json = (statusCode, body) => ({
   statusCode,
-  headers: { "Content-Type": "application/json", "Cache-Control": "public, max-age=20" },
+  headers: { "Content-Type": "application/json", "Cache-Control": "no-store" },
   body: JSON.stringify(body),
 });
 
@@ -92,6 +97,33 @@ function computeVenueInsights(sets, sinceMs) {
 
 exports.computeVenueInsights = computeVenueInsights;
 
+/* Is this request allowed to see the numbers for `venue`? */
+async function isAuthorized(event, venue) {
+  const qs = event.queryStringParameters || {};
+  const key = String(qs.key || "");
+  if (key && key.length <= 128) {
+    try {
+      const hash = crypto.createHash("sha256").update(key).digest("hex");
+      const snap = await admin.firestore().collection("announcerKeys").doc(hash).get();
+      if (snap.exists) {
+        const d = snap.data();
+        const expired = d.expiresAt && d.expiresAt.toMillis && d.expiresAt.toMillis() < Date.now();
+        const venues = Array.isArray(d.venues) ? d.venues : [];
+        if (!d.revoked && !expired && (venues.includes("*") || venues.includes(venue))) return true;
+      }
+    } catch (e) { console.error("announcer key check failed:", e.message); }
+  }
+  const header = (event.headers || {}).authorization || (event.headers || {}).Authorization || "";
+  if (header) {
+    try {
+      const caller = await admin.auth().verifyIdToken(header.replace(/^Bearer\s+/i, ""));
+      if ((caller.email || "").toLowerCase() === ADMIN_EMAIL) return true;
+    } catch (e) { /* not a valid sign-in */ }
+  }
+  return false;
+}
+exports.isAuthorized = isAuthorized;
+
 exports.handler = async (event) => {
   const venue = String((event.queryStringParameters || {}).venue || "");
   if (!/^[a-z0-9-]{1,60}$/.test(venue) || TEST_VENUES.includes(venue)) return json(400, { error: "Bad venue" });
@@ -100,6 +132,10 @@ exports.handler = async (event) => {
   try { init(); } catch (e) {
     console.error("Firebase init failed:", e.message);
     return json(500, { error: "Server not configured" });
+  }
+
+  if (!(await isAuthorized(event, venue))) {
+    return { statusCode: 403, headers: { "Content-Type": "application/json", "Cache-Control": "no-store" }, body: JSON.stringify({ error: "Announcer link required" }) };
   }
 
   const snap = await admin.firestore().collection("sets").where("venueId", "==", venue)
