@@ -862,7 +862,10 @@
 
             <h3>👤 Team 1 — Player 1</h3>
             <div class="form-group">
-                <input type="text" id="adminPlayerName" placeholder="Player 1 full name" autocomplete="off"
+                <select id="rosterPick1Admin" class="roster-pick" onchange="pickRosterPlayer(1, this)" style="width:100%;padding:12px;border-radius:10px;border:none;font-size:1em;background:rgba(255,255,255,0.9);color:#333;margin-bottom:8px;display:none;">
+                    <option value="">-- Pick Player 1 from the UA roster --</option>
+                </select>
+                <input type="text" id="adminPlayerName" placeholder="Player 1 full name (or pick above)" autocomplete="off"
                     style="width:100%;padding:12px;border-radius:10px;border:none;font-size:1em;background:rgba(255,255,255,0.9);color:#333;">
             </div>
 
@@ -906,6 +909,9 @@
         <div id="actingPlayerBlock" style="display:none;">
             <h3>👤 Your Team — Player 1</h3>
             <div class="form-group">
+                <select id="rosterPick1Acting" class="roster-pick" onchange="pickRosterPlayer(1, this)" style="width:100%;padding:12px;border-radius:10px;border:none;font-size:1em;background:rgba(255,255,255,0.9);color:#333;margin-bottom:8px;display:none;">
+                    <option value="">-- Pick Player 1 from the UA roster --</option>
+                </select>
                 <input type="text" id="actingPlayerName" placeholder="Player 1 full name" list="partnerNameList" autocomplete="off" oninput="updateMatchSetupLabels()"
                     style="width:100%;padding:12px;border-radius:10px;border:none;font-size:1em;background:rgba(255,255,255,0.9);color:#333;">
             </div>
@@ -925,6 +931,10 @@
                 </div>
             </div>
             
+            <select id="rosterPick2" class="roster-pick" onchange="pickRosterPlayer(2, this)" style="width:100%;padding:12px;border-radius:10px;border:none;font-size:1em;background:rgba(255,255,255,0.9);color:#333;margin-bottom:8px;display:none;">
+                <option value="">-- Pick Player 2 from the UA roster --</option>
+            </select>
+
             <input type="text" id="partnerName" placeholder="Partner's full name" list="partnerNameList" autocomplete="off" oninput="updateMatchSetupLabels()">
             <datalist id="partnerNameList"></datalist>
             
@@ -2945,6 +2955,9 @@
             // Load previously used names for autocomplete
             loadNameAutocomplete();
 
+            // UA roster dropdowns for Player 1 and Player 2 (admin, or a scorekeeper scoring for the admin's account)
+            setupRosterPickers();
+
             // Load paired partners for match
             loadPairedPartnersForMatch();
 
@@ -2954,6 +2967,71 @@
             // Coin toss is the whole point of this app — lead with it. Player/role
             // entry is secondary and happens after "Continue Match Setup".
             showSetupTab('cointoss', null);
+        }
+
+        // ── UA roster pickers on Match Setup ──────────────────────────────────
+        // The roster (Roster screen, `roster` collection) is the admin's program data. On Match
+        // Setup it fills the Player 1 and Player 2 NAMES only. `position` stays reference-only and
+        // never touches the blocker/defender choice. Anyone else sees the normal text fields.
+        let rosterPickerPlayers = [];
+
+        function canUseRoster() {
+            if (isAdmin()) return true;
+            return isActingAs() && (userProfile?.email || '').toLowerCase() === ADMIN_EMAIL.toLowerCase();
+        }
+
+        async function setupRosterPickers() {
+            const selects = ['rosterPick1Admin', 'rosterPick1Acting', 'rosterPick2'].map(id => document.getElementById(id)).filter(Boolean);
+            selects.forEach(sel => { sel.style.display = 'none'; sel.value = ''; });
+            if (!canUseRoster()) return;
+            try {
+                if (!rosterPickerPlayers.length) {
+                    const snap = await db.collection('roster').get();
+                    rosterPickerPlayers = snap.docs.map(d => ({ id: d.id, ...d.data() }))
+                        .filter(p => p.name && p.active !== false)
+                        .sort((a, b) => a.name.localeCompare(b.name));
+                }
+                if (!rosterPickerPlayers.length) return;
+                const options = '<option value="">-- Pick from the UA roster --</option>' + rosterPickerPlayers.map(p =>
+                    `<option value="${escHtml(p.name)}">${escHtml(p.name)}${p.jerseyNumber ? ' (#' + escHtml(p.jerseyNumber) + ')' : ''}</option>`).join('');
+                selects.forEach(sel => {
+                    // Player 1 picker only where its input is shown (admin block vs scorekeeper block)
+                    if (sel.id === 'rosterPick1Admin' && !isAdmin()) return;
+                    if (sel.id === 'rosterPick1Acting' && !isActingAs()) return;
+                    sel.innerHTML = options.replace('-- Pick from the UA roster --',
+                        sel.id === 'rosterPick2' ? '-- Pick Player 2 from the UA roster --' : '-- Pick Player 1 from the UA roster --');
+                    sel.style.display = '';
+                });
+            } catch (e) {
+                console.warn('[ROSTER] Could not load roster for Match Setup:', e);
+            }
+        }
+
+        function pickRosterPlayer(which, selectEl) {
+            const name = selectEl.value;
+            if (!name) return;
+            const p1Input = isAdmin() ? document.getElementById('adminPlayerName') : document.getElementById('actingPlayerName');
+            const p2Input = document.getElementById('partnerName');
+            const other = which === 1 ? p2Input.value.trim() : (p1Input?.value || '').trim();
+            if (other && other.toLowerCase() === name.toLowerCase()) {
+                alert('Player 1 and Player 2 must be two different players.');
+                selectEl.value = '';
+                return;
+            }
+            if (which === 1) {
+                if (p1Input) p1Input.value = name;
+            } else {
+                // A roster pick is a typed-name partner, not a paired (data-sharing) partner.
+                selectedPairedPartner = null;
+                const paired = document.getElementById('pairedPartnerSelect');
+                if (paired) paired.value = '';
+                const ind = document.getElementById('partnerSharedIndicator');
+                if (ind) ind.style.display = 'none';
+                p2Input.disabled = false;
+                p2Input.style.display = 'block';
+                p2Input.value = name;
+            }
+            updateMatchSetupLabels();
         }
 
         function populateMatchSetupVenues() {
