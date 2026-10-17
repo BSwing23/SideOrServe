@@ -492,7 +492,7 @@
 <body>
     <!-- Scorekeeper banner: shown while scoring for another player -->
     <div id="actingAsBanner" style="display:none; position:sticky; top:0; z-index:3000; align-items:center; justify-content:space-between; gap:10px; padding:8px 14px; background:#981E32; border-bottom:1px solid rgba(255,255,255,0.4); font-size:0.9em;">
-        <span>Scoring for <strong id="actingAsName"></strong></span>
+        <span><span id="actingAsPrefix">Scoring for</span> <strong id="actingAsName"></strong></span>
         <button onclick="exitActingAs()" style="background:rgba(0,0,0,0.25); border:1px solid white; color:white; padding:4px 12px; border-radius:6px; cursor:pointer; font-size:0.9em;">Back to my account</button>
     </div>
 
@@ -627,7 +627,7 @@
         <div id="returnToMatchBtn" style="display:none;">
             <button class="btn btn-primary menu-btn" style="background: rgba(152,30,50,0.9); border: 2px solid white;" onclick="returnToLiveMatch()">▶ Return to Live Match</button>
         </div>
-        <button class="btn btn-primary menu-btn" onclick="showMatchSetup()" style="margin-bottom: 20px;">New Match</button>
+        <button class="btn btn-primary menu-btn" id="newMatchHomeBtn" onclick="showMatchSetup()" style="margin-bottom: 20px;">New Match</button>
 
         <!-- Scorekeeper invitations addressed to me -->
         <div id="scorekeeperInvitesCard" class="profile-info" style="margin-top: 20px; display:none;">
@@ -1560,6 +1560,7 @@
         let viewingMatchId = null;
         let currentSetId = null;
         let currentPartnerSetId = null;  // mirrored set doc id, when scoring with a paired partner
+        let currentRosterSetIds = {};    // roster-player uid -> mirrored set doc id, for this set (see rosterMirrorTargets())
         let currentServerStatsScope = 'thisSet';  // 'thisSet', 'thisMatch', 'allTime'
         
         // Partner Pairing System
@@ -2268,6 +2269,8 @@
             // Show "Return to Live Match" button if a match is in progress
             const matchInProgress = matchState && matchState.servers && (matchState.ourScore > 0 || matchState.theirScore > 0 || matchScore.setsCompleted.length > 0);
             document.getElementById('returnToMatchBtn').style.display = matchInProgress ? 'block' : 'none';
+            const _newMatchBtn = document.getElementById('newMatchHomeBtn');
+            if (_newMatchBtn) _newMatchBtn.style.display = actingAs?.viewOnly ? 'none' : '';
 
             // Show admin-only Roster button only for the primary account
             const _rosterBtn = document.getElementById('rosterHomeBtn');
@@ -2905,6 +2908,7 @@
         }
 
         function showMatchSetup() {
+            if (actingAs?.viewOnly) { alert('You are viewing ' + (actingAs.name || 'a player') + "'s stats. Tap Back to my account to score a match."); return; }
             hideAllScreens();
             document.getElementById('matchSetupScreen').classList.remove('hidden');
             // Show admin-only blocks only for the primary account
@@ -2915,7 +2919,8 @@
             if (_actingBlock) {
                 _actingBlock.style.display = isActingAs() ? '' : 'none';
                 const _actingInput = document.getElementById('actingPlayerName');
-                if (_actingInput) _actingInput.value = isActingAs() ? (userProfile?.name || '') : '';
+                // When the account being scored is the admin's (a coach, never a player), leave Player 1 empty.
+                if (_actingInput) _actingInput.value = (isActingAs() && !canUseRoster()) ? (userProfile?.name || '') : '';
             }
             
             // Populate venue dropdown with built-in + custom venues
@@ -2939,6 +2944,7 @@
                 servingTeam: null,
                 yourTeamServer: null,
                 opponentServer: null,
+                rosterIds: { you: null, partner: null },
                 roles: { opponent1: null, opponent2: null, player: null, partner: null }
             };
             
@@ -3034,6 +3040,88 @@
             updateMatchSetupLabels();
         }
 
+        // ── Roster players as virtual accounts ─────────────────────────────────
+        // Each roster player gets a lightweight account, players/roster-<rosterId>, with no
+        // sign-in. Every set (and match reference) scored with that player as Player 1 or
+        // Player 2 is mirrored into it exactly like a paired partner's copy, so the whole Data
+        // tab and Match History work on it unchanged: the admin opens it with "View stats" on
+        // the Roster screen and sees the app as that player would. The ids are the roster doc
+        // ids (the name slug) and are also saved on every set and match as rosterIds.
+        function resolveRosterIds() {
+            const none = { you: null, partner: null };
+            if (!canUseRoster() || !rosterPickerPlayers.length) return none;
+            const idFor = name => {
+                const n = (name || '').trim().toLowerCase();
+                if (!n) return null;
+                const p = rosterPickerPlayers.find(x => x.name.trim().toLowerCase() === n);
+                return p ? p.id : null;
+            };
+            const you = idFor(matchSetup.yourName), partner = idFor(matchSetup.partnerName);
+            return { you, partner: partner !== you ? partner : null };
+        }
+
+        // The roster players in this match who need a mirrored copy: [{ slot, id, uid, name }]
+        function rosterMirrorTargets() {
+            const ids = matchSetup.rosterIds || {};
+            return ['you', 'partner'].filter(slot => ids[slot]).map(slot => ({
+                slot, id: ids[slot], uid: 'roster-' + ids[slot],
+                name: rosterPickerPlayers.find(p => p.id === ids[slot])?.name || (slot === 'you' ? matchSetup.yourName : matchSetup.partnerName) || ''
+            }));
+        }
+
+        const rosterProfilesEnsured = new Set();
+        async function ensureRosterProfile(t) {
+            if (rosterProfilesEnsured.has(t.uid)) return;
+            const ref = db.collection('players').doc(t.uid);
+            const snap = await ref.get();
+            if (!snap.exists) {
+                const emptyTier = () => ({
+                    ourTeam: { totalRPs: 0, count: 0 }, opponents: { totalRPs: 0, count: 0 },
+                    winners: { totalRPs: 0, count: 0 }, losers: { totalRPs: 0, count: 0 },
+                    servingTeamWins: 0, receivingTeamWins: 0, totalPointsSum: 0, competitiveCount: 0,
+                    roles: {
+                        ourBlocker: { totalPS: 0, count: 0 }, ourDefender: { totalPS: 0, count: 0 },
+                        theirBlocker: { totalPS: 0, count: 0 }, theirDefender: { totalPS: 0, count: 0 },
+                        blockerMatchup: { total: 0, ourWinAndWon: 0 }, defenderMatchup: { total: 0, ourWinAndWon: 0 }
+                    }
+                });
+                await ref.set({
+                    name: t.name, affiliation: 'University of Arizona', role: 'rosterPlayer',
+                    virtual: true, rosterId: t.id, unitPref: 'imperial',
+                    createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+                    rpStats: {
+                        sets21: emptyTier(), sets15: emptyTier(), servingTeamWins: 0, receivingTeamWins: 0,
+                        momentum: {
+                            our: { run3: { total: 0, won: 0 }, run4: { total: 0, won: 0 }, run5: { total: 0, won: 0 } },
+                            their: { run3: { total: 0, won: 0 }, run4: { total: 0, won: 0 }, run5: { total: 0, won: 0 } }
+                        }
+                    }
+                });
+            }
+            rosterProfilesEnsured.add(t.uid);
+        }
+
+        // Admin: open the app as a roster player (read-only). Reuses the scorekeeper "acting as"
+        // plumbing: dataUid() points at the player's virtual account, so every query reads their data.
+        async function viewRosterPlayer(id) {
+            if (!isAdmin()) return;
+            if (matchIsInProgress()) { alert('Finish or cancel the match in progress before viewing a player.'); return; }
+            try {
+                const snap = await db.collection('players').doc('roster-' + id).get();
+                if (!snap.exists) {
+                    alert('No matches have been saved for this player yet. Pick them as Player 1 or Player 2 when you score a match and their stats will appear here.');
+                    return;
+                }
+                actingAs = { uid: 'roster-' + id, name: snap.data().name || 'player', viewOnly: true };
+                userProfile = snap.data();
+                updateActingAsBanner();
+                showHomeScreen();
+            } catch (error) {
+                console.error('[ROSTER] Could not open player view:', error);
+                alert('Could not open that player right now. Please try again.');
+            }
+        }
+
         function populateMatchSetupVenues() {
             const select = document.getElementById('venueName');
             let html = '';
@@ -3063,11 +3151,11 @@
             // adminPlayerName input is authoritative when logged in as admin, never
             // the admin account's own profile name.
             const playerName = isAdmin()
-                ? (document.getElementById('adminPlayerName')?.value.trim() || 'Your')
+                ? (document.getElementById('adminPlayerName')?.value.trim() || 'Player 1')
                 : isActingAs()
-                    ? (document.getElementById('actingPlayerName')?.value.trim() || userProfile.name || 'Your')
+                    ? (document.getElementById('actingPlayerName')?.value.trim() || (canUseRoster() ? 'Player 1' : (userProfile.name || 'Your')))
                     : (document.getElementById('playerName')?.value.trim() || userProfile.name || 'Your');
-            const partnerName = document.getElementById('partnerName').value.trim() || 'Partner';
+            const partnerName = document.getElementById('partnerName').value.trim() || (canUseRoster() ? 'Player 2' : 'Partner');
             const opp1Name = document.getElementById('opponent1Name').value.trim() || 'Opponent 1';
             const opp2Name = document.getElementById('opponent2Name').value.trim() || 'Opponent 2';
             
@@ -3081,7 +3169,7 @@
             const opp1Last = opp1Name.split(' ').pop();
             const opp2Last = opp2Name.split(' ').pop();
             
-            const yourTeamLabel = partnerName !== 'Partner' ? `${playerLast}/${partnerLast}` : playerName + "'s Team";
+            const yourTeamLabel = (partnerName !== 'Partner' && partnerName !== 'Player 2') ? `${playerLast}/${partnerLast}` : playerName + "'s Team";
             const theirTeamLabel = opp1Name !== 'Opponent 1' && opp2Name !== 'Opponent 2' ? `${opp1Last}/${opp2Last}` : 'Their Team';
             
             document.getElementById('yourTeamLabel').textContent = yourTeamLabel;
@@ -4145,6 +4233,14 @@
             const opp1Name = document.getElementById('opponent1Name').value.trim();
             const opp2Name = document.getElementById('opponent2Name').value.trim();
             
+            // The admin account is a coach, never a player, and so is a scorekeeper scoring for it:
+            // both players must be chosen (from the roster or typed). Never fall back to the account's own name.
+            if (canUseRoster()) {
+                const _p1 = (isAdmin() ? document.getElementById('adminPlayerName') : document.getElementById('actingPlayerName'))?.value.trim();
+                if (!_p1) { showMatchError('Please choose Player 1 from the roster (or type the name)'); return; }
+                if (!partnerName) { showMatchError('Please choose Player 2 from the roster (or type the name)'); return; }
+                if (_p1.toLowerCase() === partnerName.toLowerCase()) { showMatchError('Player 1 and Player 2 must be two different players'); return; }
+            }
             if (!partnerName) {
                 showMatchError('Please enter partner name');
                 return;
@@ -4210,6 +4306,7 @@
             matchSetup.partnerName = partnerName;
             matchSetup.opponent1Name = opp1Name;
             matchSetup.opponent2Name = opp2Name;
+            matchSetup.rosterIds = resolveRosterIds();  // UA roster players among Player 1 / Player 2, or nulls
 
             // Live board opt-in (built-in venues only — custom venue ids aren't global)
             matchSetup.court = (document.getElementById('courtNumber')?.value || '').replace(/[^A-Za-z0-9 \-]/g, '').trim().slice(0, 10);
@@ -4232,6 +4329,7 @@
             currentMatchId = null;  // Always start a fresh Firestore document
             currentSetId = null;
             currentPartnerSetId = null;
+            currentRosterSetIds = {};
 
             // Set 1 always starts as normal game type (to 21, switch every 7)
             matchSetup.gameType = 'normal';
@@ -5135,6 +5233,7 @@
                 if (!matchIsComplete) {
                     currentSetId = null;
                     currentPartnerSetId = null;
+                    currentRosterSetIds = {};
                 }
                 await saveMatchHeader(false);      // update match header with new setsCompleted
                 console.log('[AUTO-SAVE] Set saved successfully');
@@ -5189,6 +5288,7 @@
             currentMatchId = null;
             currentSetId = null;
             currentPartnerSetId = null;
+            currentRosterSetIds = {};
             matchState.setActive = false;
             
             showHomeScreen();
@@ -6406,6 +6506,17 @@
                     console.error('[RP STATS] Error mirroring to partner:', error);
                 }
             }
+
+            // Same team-level increments onto each UA roster player's virtual account, so their
+            // pre-aggregated counters match what the live Data tab computes from their sets.
+            for (const t of rosterMirrorTargets()) {
+                try {
+                    await ensureRosterProfile(t);
+                    await db.collection('players').doc(t.uid).update(updates);
+                } catch (error) {
+                    console.error('[RP STATS] Error mirroring to roster player', t.uid, error);
+                }
+            }
         }
 
         // ── Live re-implementation of userProfile.rpStats[tier], read from the sets
@@ -7016,6 +7127,8 @@
                 owners: selectedPairedPartner
                     ? [dataUid(), selectedPairedPartner.partnerId]
                     : [dataUid()],
+                // UA roster players among Player 1 ('you') and Player 2 ('partner'); null = not on the roster
+                rosterIds: matchSetup.rosterIds || { you: null, partner: null },
 
                 updatedAt: firebase.firestore.FieldValue.serverTimestamp()
             });
@@ -7088,6 +7201,50 @@
                     console.error('[SET SAVE] Error mirroring set for partner:', mirrorErr);
                 }
             }
+
+            // Mirror this set into each UA roster player's own (virtual) account — see
+            // "Roster players as virtual accounts". Best-effort, like the partner mirror: a failure
+            // here never blocks the scorekeeper's own save. Player 1 keeps the stored perspective;
+            // Player 2 gets the same you/partner swap a paired partner's copy gets.
+            for (const t of rosterMirrorTargets()) {
+                try {
+                    await ensureRosterProfile(t);
+                    const swap = t.slot === 'partner';
+                    const rosterCopy = {
+                        ...setData,
+                        userId: t.uid,
+                        owners: [t.uid],
+                        isShared: false,
+                        rosterPlayerId: t.id,
+                        mirroredFromSetId: currentSetId,
+                        mirroredFromUserId: currentUser.uid
+                    };
+                    if (swap) {
+                        Object.assign(rosterCopy, {
+                            playerName: setData.partnerName,
+                            partnerName: setData.playerName,
+                            playerRole: setData.partnerRole,
+                            partnerRole: setData.playerRole,
+                            serverStats: {
+                                you: setData.serverStats?.partner,
+                                partner: setData.serverStats?.you,
+                                opp1: setData.serverStats?.opp1,
+                                opp2: setData.serverStats?.opp2
+                            },
+                            rosterIds: { you: setData.rosterIds?.partner || null, partner: setData.rosterIds?.you || null }
+                        });
+                    }
+                    if (!currentRosterSetIds[t.uid]) {
+                        rosterCopy.createdAt = firebase.firestore.FieldValue.serverTimestamp();
+                        const ref = await db.collection('sets').add(rosterCopy);
+                        currentRosterSetIds[t.uid] = ref.id;
+                    } else {
+                        await db.collection('sets').doc(currentRosterSetIds[t.uid]).update(rosterCopy);
+                    }
+                } catch (rosterErr) {
+                    console.error('[SET SAVE] Error mirroring set for roster player', t.uid, rosterErr);
+                }
+            }
         }
 
         // ── Lightweight match header save ──────────────────────────────────────
@@ -7126,6 +7283,7 @@
                 primaryOwner: dataUid(),
                 creatorId: currentUser.uid,
                 scorekeeperId: currentUser.uid,
+                rosterIds: matchSetup.rosterIds || { you: null, partner: null },
                 team1: {
                     player1: { name: safe(matchSetup.yourName || userProfile?.name), userId: isAdmin() ? null : dataUid() },
                     player2: { name: safe(matchSetup.partnerName), userId: selectedPairedPartner ? selectedPairedPartner.partnerId : null }
@@ -7180,6 +7338,24 @@
                             .update({ totalMatches: firebase.firestore.FieldValue.increment(1), lastMatchDate: firebase.firestore.FieldValue.serverTimestamp() });
                         console.log('[MATCH SAVE] Shared with partner:', selectedPairedPartner.partnerName);
                     }
+
+                    // Reference doc in each UA roster player's virtual account, so their Match History finds it
+                    for (const t of rosterMirrorTargets()) {
+                        try {
+                            await ensureRosterProfile(t);
+                            await db.collection('players').doc(t.uid).collection('matches').doc(currentMatchId).set({
+                                matchId: currentMatchId,
+                                timestamp: firebase.firestore.FieldValue.serverTimestamp(),
+                                isShared: true,
+                                sharedWith: [dataUid()],
+                                hiddenByOwner: false,
+                                includedInStats: true,
+                                rosterMirror: true
+                            });
+                        } catch (rosterRefErr) {
+                            console.error('[MATCH SAVE] Error saving roster player match reference:', t.uid, rosterRefErr);
+                        }
+                    }
                 } else {
                     await db.collection('matches').doc(currentMatchId).update(matchData);
                     console.log('[MATCH SAVE] Updated match header:', currentMatchId);
@@ -7200,11 +7376,15 @@
                 const seen = new Set();
                 
                 // Always query matches collection directly — most reliable (GASA6 pattern)
-                const directSnapshot = await db.collection('matches')
-                    .where('userId', '==', dataUid())
-                    .orderBy('updatedAt', 'desc')
-                    .limit(50)
-                    .get();
+                // A roster player's virtual account owns no match headers (they live on the program
+                // account and are found through the reference docs below, like a shared match).
+                const directSnapshot = actingAs?.viewOnly
+                    ? { docs: [] }
+                    : await db.collection('matches')
+                        .where('userId', '==', dataUid())
+                        .orderBy('updatedAt', 'desc')
+                        .limit(50)
+                        .get();
                 
                 directSnapshot.docs.forEach(doc => {
                     if (!seen.has(doc.id)) {
@@ -7645,7 +7825,10 @@
                                     ${p.position || ''}${seasons ? ` • ${seasons}` : ''}
                                 </div>
                             </div>
-                            <div>${inactiveBadge}</div>
+                            <div style="display:flex; flex-direction:column; align-items:flex-end; gap:6px;">
+                                ${inactiveBadge}
+                                <button onclick="event.stopPropagation(); viewRosterPlayer('${p.id}')" style="background:rgba(255,255,255,0.15); border:1px solid rgba(255,255,255,0.5); color:white; padding:6px 12px; border-radius:6px; cursor:pointer; font-size:0.85em;">View stats</button>
+                            </div>
                         </div>
                     </div>
                 `;
@@ -7747,7 +7930,7 @@
         // (no duplicates), but the flag is what actually stops it from
         // re-running and stomping edits made after the initial seed.
         async function seedInitialRosterIfNeeded() {
-            if (!isAdmin() || !userProfile || userProfile.rosterSeeded) return;
+            if (!isAdmin() || isActingAs() || !userProfile || userProfile.rosterSeeded) return;
             const seed = [
                 // Returning both seasons (2026 & 2027)
                 { name: 'Leah Norris', jerseyNumber: '1', position: 'Blocker', seasons: ['2026', '2027'], active: true },
@@ -8540,6 +8723,8 @@
             if (!banner) return;
             if (actingAs) {
                 document.getElementById('actingAsName').textContent = actingAs.name || 'player';
+                const _pre = document.getElementById('actingAsPrefix');
+                if (_pre) _pre.textContent = actingAs.viewOnly ? 'Viewing stats for' : 'Scoring for';
                 banner.style.display = 'flex';
             } else {
                 banner.style.display = 'none';

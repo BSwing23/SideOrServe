@@ -24,11 +24,28 @@ service cloud.firestore {
         .hasAny(['includedInStats', 'hiddenByOwner', 'userId', 'owners', 'primaryOwner']);
     }
 
+    // — UA roster players as virtual accounts ————————————————
+    // players/roster-<rosterId> is a sign-in-less account for one UA roster player. Every set a
+    // roster player is in is mirrored into it (userId = roster-<id>), so the admin can open the
+    // app as that player. Only the admin, and scorekeepers linked to the admin's account, may
+    // write them; only the admin may delete. Nobody else can read or write them.
+    function isAdminUser() {
+      return request.auth != null && request.auth.uid == 'zk3s6GveeDRRFsOcELZWEXwtkV72';
+    }
+    function isRosterAcct(id) {
+      return id is string && id.matches('roster-.*');
+    }
+    function rosterWriter() {
+      return isAdminUser() || (request.auth != null && skOf('zk3s6GveeDRRFsOcELZWEXwtkV72'));
+    }
+
     // — Player profiles ————————————————————
     // Each user owns their own doc and all subcollections.
     match /players/{uid} {
-      allow read: if request.auth != null && (request.auth.uid == uid || skOf(uid));
+      allow read: if request.auth != null && (request.auth.uid == uid || skOf(uid) || (isRosterAcct(uid) && rosterWriter()));
       allow write: if request.auth != null && request.auth.uid == uid;
+      allow create, update: if isRosterAcct(uid) && rosterWriter();
+      allow delete: if isRosterAcct(uid) && isAdminUser();
       // A paired partner or the owner's scorekeeper can mirror team-level RP stats
       // onto this account — scoped to ONLY the rpStats field so they can never
       // touch name/email/role/anything else on this profile.
@@ -52,6 +69,7 @@ service cloud.firestore {
         allow read, write: if request.auth != null && request.auth.uid == uid;
         allow read, create: if skOf(uid);
         allow update: if skOf(uid) && skSafeUpdate();
+        allow read, write: if isRosterAcct(uid) && rosterWriter();
       }
 
       // Set reference docs written into a partner's subcollection
@@ -122,18 +140,22 @@ service cloud.firestore {
       allow create: if request.auth != null
                       && (request.auth.uid == request.resource.data.userId
                           || request.auth.uid in request.resource.data.owners
-                          || skOf(request.resource.data.userId));
+                          || skOf(request.resource.data.userId)
+                          || (isRosterAcct(request.resource.data.userId) && rosterWriter()));
       allow read: if request.auth != null
                       && (request.auth.uid == resource.data.userId
                           || request.auth.uid in resource.data.owners
-                          || skOf(resource.data.userId));
+                          || skOf(resource.data.userId)
+                          || (isRosterAcct(resource.data.userId) && rosterWriter()));
       allow update: if request.auth != null
                       && (request.auth.uid == resource.data.userId
                           || request.auth.uid in resource.data.owners
-                          || (skOf(resource.data.userId) && skSafeUpdate()));
+                          || (skOf(resource.data.userId) && skSafeUpdate())
+                          || (isRosterAcct(resource.data.userId) && (isAdminUser() || skSafeUpdate()) && rosterWriter()));
       allow delete: if request.auth != null
                       && (request.auth.uid == resource.data.userId
-                          || request.auth.uid in resource.data.owners);
+                          || request.auth.uid in resource.data.owners
+                          || (isRosterAcct(resource.data.userId) && isAdminUser()));
     }
 
     // — Live board ————————————————————
