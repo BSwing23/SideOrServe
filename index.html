@@ -917,6 +917,15 @@
             </div>
         </div>
 
+        <!-- Scout entry (admin, or a scorekeeper scoring for the admin's account): Point Detective-style rally logging -->
+        <div id="scoutModeBlock" style="display:none; background:rgba(255,255,255,0.08); border:1px solid rgba(255,255,255,0.25); border-radius:10px; padding:12px 14px; margin:14px 0;">
+            <label style="display:flex; align-items:flex-start; gap:10px; cursor:pointer; font-weight:bold;">
+                <input type="checkbox" id="scoutModeCheck" style="margin-top:4px;">
+                <span>🔎 Scout entry: log every rally</span>
+            </label>
+            <div style="font-size:0.85em; opacity:0.8; margin-top:6px;">For matches entered from video. Each rally: serve result (Ace / Error / In Play), First Ball Kill, and who won. Scouted sets stay out of the community pool and public numbers.</div>
+        </div>
+
         <h3>🤝 Your Partner</h3>
         <div class="form-group">
             <label for="partnerName">Partner Name:</label>
@@ -1082,9 +1091,12 @@
             <button id="scopeAllTimeBtn" class="btn-small" onclick="setServerStatsScope('allTime')" style="padding: 5px 12px; font-size: 0.85em;">All Time</button>
         </div>
         
+        <!-- Scout entry panel (Point Detective-style): shown only when Scout entry is on -->
+        <div id="scoutPanel" style="display:none; background:rgba(0,0,0,0.25); border:2px solid rgba(255,255,255,0.35); border-radius:12px; padding:14px; margin:14px 0 6px;"></div>
+
         <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin: 20px 0;">
             <!-- Team 1 Box (Your Team) - Clickable - ON LEFT -->
-            <div onclick="scorePoint('our')" style="background: rgba(255,255,255,0.15); border: 3px solid rgba(255,255,255,0.3); border-radius: 12px; padding: 15px; cursor: pointer; transition: all 0.2s;" onmouseover="this.style.transform='scale(1.02)'; this.style.borderColor='rgb(255,255,255)';" onmouseout="this.style.transform='scale(1)'; this.style.borderColor='rgba(255,255,255,0.3)';">
+            <div onclick="teamCardTap('our')" style="background: rgba(255,255,255,0.15); border: 3px solid rgba(255,255,255,0.3); border-radius: 12px; padding: 15px; cursor: pointer; transition: all 0.2s;" onmouseover="this.style.transform='scale(1.02)'; this.style.borderColor='rgb(255,255,255)';" onmouseout="this.style.transform='scale(1)'; this.style.borderColor='rgba(255,255,255,0.3)';">
                 <!-- Player 1 -->
                 <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 12px; position: relative;">
                     <img src="logo.png" class="serving-indicator" id="youServingIndicator" style="width: 30px; height: 30px; display: none; position: absolute; left: -5px;">
@@ -1106,7 +1118,7 @@
             </div>
             
             <!-- Team 2 Box (Opponents) - Clickable - ON RIGHT -->
-            <div onclick="scorePoint('their')" style="background: rgba(152,30,50,0.6); border: 3px solid rgba(152,30,50,0.9); border-radius: 12px; padding: 15px; cursor: pointer; transition: all 0.2s;" onmouseover="this.style.transform='scale(1.02)'; this.style.borderColor='rgb(152,30,50)';" onmouseout="this.style.transform='scale(1)'; this.style.borderColor='rgba(152,30,50,0.9)';">
+            <div onclick="teamCardTap('their')" style="background: rgba(152,30,50,0.6); border: 3px solid rgba(152,30,50,0.9); border-radius: 12px; padding: 15px; cursor: pointer; transition: all 0.2s;" onmouseover="this.style.transform='scale(1.02)'; this.style.borderColor='rgb(152,30,50)';" onmouseout="this.style.transform='scale(1)'; this.style.borderColor='rgba(152,30,50,0.9)';">
                 <!-- Player 1 -->
                 <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 12px; position: relative;">
                     <img src="logo.png" class="serving-indicator" id="opp1ServingIndicator" style="width: 30px; height: 30px; display: none; position: absolute; left: -5px;">
@@ -1154,7 +1166,7 @@
             <button class="btn btn-secondary" onclick="cancelMatch()" style="background:rgba(0,0,0,0.2);border:1px solid rgba(255,255,255,0.5);color:white;font-size:0.8em;padding:8px 12px;">Cancel</button>
         </div>
         
-        <div style="background:rgba(0,0,0,0.25);border-radius:8px;padding:10px 14px;margin-top:8px;font-size:0.85em;color:white;">
+        <div id="liveTapTip" style="background:rgba(0,0,0,0.25);border-radius:8px;padding:10px 14px;margin-top:8px;font-size:0.85em;color:white;">
             Tap which team scored — app tracks servers, sides &amp; stats automatically
         </div>
         
@@ -2987,6 +2999,12 @@
         }
 
         async function setupRosterPickers() {
+            const _scoutBlock = document.getElementById('scoutModeBlock');
+            if (_scoutBlock) {
+                _scoutBlock.style.display = canUseRoster() ? '' : 'none';
+                const _chk = document.getElementById('scoutModeCheck');
+                try { if (_chk) _chk.checked = canUseRoster() && localStorage.getItem('sos_scoutMode') === '1'; } catch (e) {}
+            }
             const selects = ['rosterPick1Admin', 'rosterPick1Acting', 'rosterPick2'].map(id => document.getElementById(id)).filter(Boolean);
             selects.forEach(sel => { sel.style.display = 'none'; sel.value = ''; });
             if (!canUseRoster()) return;
@@ -4311,6 +4329,11 @@
             // Live board opt-in (built-in venues only — custom venue ids aren't global)
             matchSetup.court = (document.getElementById('courtNumber')?.value || '').replace(/[^A-Za-z0-9 \-]/g, '').trim().slice(0, 10);
             matchSetup.broadcast = !!(document.getElementById('broadcastToggle')?.checked && venues[matchSetup.venue]);
+            // Scout entry: Point Detective-style rally logging. A match entered from video is never broadcast live.
+            matchSetup.scoutMode = !!(canUseRoster() && document.getElementById('scoutModeCheck')?.checked);
+            try { localStorage.setItem('sos_scoutMode', matchSetup.scoutMode ? '1' : '0'); } catch (e) {}
+            if (matchSetup.scoutMode) matchSetup.broadcast = false;
+            scoutDraft = { serve: null, fbk: null }; pendingRallyDetail = null;
             
             // Save names for autocomplete in future matches
             if (yourName) {
@@ -4431,6 +4454,7 @@
                 longestRuns: { our: 0, their: 0 },
                 pointHistory: [],
                 undoStack: [],
+                rallyLog: [],   // scout entry: one record per rally (serve result, FBK, winner)
                 virtual15: null,
                 virtual15Captured: false,
                 serverRotation: [], // 4-person serving rotation order
@@ -4548,7 +4572,8 @@
                 pointHistory: JSON.parse(JSON.stringify(matchState.pointHistory)),
                 currentSegment: JSON.parse(JSON.stringify(matchState.currentSegment)),
                 completedSegments: JSON.parse(JSON.stringify(matchState.completedSegments)),
-                p7Stats: JSON.parse(JSON.stringify(matchState.p7Stats))
+                p7Stats: JSON.parse(JSON.stringify(matchState.p7Stats)),
+                rallyLog: JSON.parse(JSON.stringify(matchState.rallyLog || []))
             };
             matchState.undoStack.push(stateCopy);
             
@@ -4582,6 +4607,20 @@
                 return;
             }
             
+            // Scout entry: record this rally's detail now that the point is really being applied
+            // (the very first point waits for the first server to be chosen, then lands here).
+            if (pendingRallyDetail) {
+                (matchState.rallyLog = matchState.rallyLog || []).push({
+                    n: matchState.ourScore + matchState.theirScore,
+                    servingTeam: matchState.servingTeam,
+                    server: matchState.currentServer,
+                    serve: pendingRallyDetail.serve,
+                    fbk: pendingRallyDetail.fbk,
+                    winner: team
+                });
+                pendingRallyDetail = null;
+            }
+
             // Track total serves (every rally served, regardless of outcome)
             matchState.servers[matchState.currentServer].totalServes++;
             
@@ -4910,6 +4949,104 @@
             updateMatchDisplay();
         }
         
+        // ── Scout entry: Point Detective-style rally logging ──────────────────────
+        // Per rally: serve result — Ace (server's team wins), Error (receiver wins), or In Play.
+        // In Play asks "Did the receiver get a First Ball Kill?": Yes = receiver wins; No = tap who won
+        // the rally (transition). Same rules and wording as Point Detective. The winner is then fed to
+        // scorePoint() exactly as a card tap would be, so servers, sides, switches and every stat work
+        // unchanged; the rally detail is saved alongside in matchState.rallyLog (see scorePoint()).
+        let scoutDraft = { serve: null, fbk: null };
+        let pendingRallyDetail = null;
+
+        function teamCardTap(team) {
+            if (matchSetup?.scoutMode) {
+                // In scout entry the rally panel is the way to score; a stray card tap must not skip the detail.
+                const tip = document.getElementById('liveTapTip');
+                if (tip) { tip.textContent = 'Scout entry is on: use the rally panel above (serve result, first ball kill, who won).'; }
+                return;
+            }
+            scorePoint(team);
+        }
+
+        function scoutTeamLabels() {
+            const last = n => getLastName(n || '');
+            const you = last(matchSetup.yourName || userProfile?.name) + (matchSetup.partnerName ? '/' + last(matchSetup.partnerName) : '');
+            const them = [matchSetup.opponent1Name, matchSetup.opponent2Name].filter(Boolean).map(last).join('/') || 'Their team';
+            return { our: you || 'Your team', their: them };
+        }
+
+        function scoutServingTeam() {
+            return matchState.servingTeam || (matchSetup.servingTeam === 'your' ? 'our' : 'their');
+        }
+
+        function renderScoutPanel() {
+            const panel = document.getElementById('scoutPanel');
+            if (!panel) return;
+            const on = !!(matchSetup?.scoutMode && matchState && matchState.setActive !== false);
+            panel.style.display = on ? 'block' : 'none';
+            const tip = document.getElementById('liveTapTip');
+            if (tip && matchSetup?.scoutMode) tip.textContent = 'Scout entry: log each rally in the panel above. Undo removes the last rally.';
+            if (!on) return;
+
+            const labels = scoutTeamLabels();
+            const servingTeam = scoutServingTeam();
+            const receivingTeam = servingTeam === 'our' ? 'their' : 'our';
+            const serverNames = { you: matchSetup.yourName || userProfile?.name, partner: matchSetup.partnerName, opp1: matchSetup.opponent1Name, opp2: matchSetup.opponent2Name };
+            const serverName = matchState.currentServer ? (serverNames[matchState.currentServer] || '') : '';
+            const rallyNo = (matchState.ourScore || 0) + (matchState.theirScore || 0) + 1;
+            const btn = (label, fn, kind) => `<button onclick="${fn}" style="${kind === 'primary'
+                ? 'background:white; color:#981E32; border:2px solid white;'
+                : 'background:rgba(255,255,255,0.15); color:white; border:2px solid rgba(255,255,255,0.5);'} font-weight:bold; font-size:1.05em; padding:14px 8px; border-radius:10px; cursor:pointer; flex:1;">${escHtml(label)}</button>`;
+            const row = html => `<div style="display:flex; gap:10px; margin-top:10px;">${html}</div>`;
+            let html = `<div style="font-size:0.8em; opacity:0.75; letter-spacing:0.04em; text-transform:uppercase;">Rally ${rallyNo} &middot; ${escHtml(labels[servingTeam])} serving${serverName ? ' (' + escHtml(serverName) + ')' : ''}</div>`;
+
+            if (!scoutDraft.serve) {
+                html += `<div style="font-weight:bold; font-size:1.1em; margin-top:6px;">Serve result?</div>` +
+                    row(btn('Ace', "scoutChooseServe('ace')", 'primary') + btn('Error', "scoutChooseServe('error')", 'primary')) +
+                    row(btn('In Play', "scoutChooseServe('in')", 'primary'));
+            } else if (scoutDraft.serve === 'in' && scoutDraft.fbk === null) {
+                html += `<div style="font-weight:bold; font-size:1.1em; margin-top:6px;">Did ${escHtml(labels[receivingTeam])} get a First Ball Kill?</div>
+                    <div style="font-size:0.8em; opacity:0.75; margin-top:2px;">Point won on their first attack, or ${escHtml(labels[servingTeam])} never got the ball back over.</div>` +
+                    row(btn('Yes', "scoutChooseFbk(true)", 'primary') + btn('No', "scoutChooseFbk(false)", 'primary')) +
+                    row(btn('Back', 'scoutBack()', 'secondary'));
+            } else if (scoutDraft.serve === 'in' && scoutDraft.fbk === false) {
+                html += `<div style="font-weight:bold; font-size:1.1em; margin-top:6px;">Who won the rally?</div>` +
+                    row(btn(labels.our, "scoutCommit('our')", 'primary') + btn(labels.their, "scoutCommit('their')", 'primary')) +
+                    row(btn('Back', 'scoutBack()', 'secondary'));
+            }
+            panel.innerHTML = html;
+        }
+
+        function scoutChooseServe(result) {
+            if (matchState.setActive === false) return;
+            const servingTeam = scoutServingTeam();
+            if (result === 'ace') { scoutDraft = { serve: 'ace', fbk: null }; scoutCommit(servingTeam); return; }
+            if (result === 'error') { scoutDraft = { serve: 'error', fbk: null }; scoutCommit(servingTeam === 'our' ? 'their' : 'our'); return; }
+            scoutDraft = { serve: 'in', fbk: null };
+            renderScoutPanel();
+        }
+
+        function scoutChooseFbk(isYes) {
+            if (isYes) { scoutDraft.fbk = true; scoutCommit(scoutServingTeam() === 'our' ? 'their' : 'our'); return; }
+            scoutDraft.fbk = false;
+            renderScoutPanel();
+        }
+
+        function scoutBack() {
+            if (scoutDraft.fbk === false) scoutDraft.fbk = null;       // winner question -> FBK question
+            else scoutDraft = { serve: null, fbk: null };               // FBK question -> serve result
+            renderScoutPanel();
+        }
+
+        function scoutCommit(winnerTeam) {
+            pendingRallyDetail = { serve: scoutDraft.serve, fbk: scoutDraft.fbk };
+            scoutDraft = { serve: null, fbk: null };
+            scorePoint(winnerTeam);
+            // If the first-server prompt took over, the point (and this detail) is applied once it is answered.
+            if (!needsInitialServerSelection) pendingRallyDetail = null;
+            renderScoutPanel();
+        }
+
         function getLastName(fullName) {
             if (!fullName || fullName.trim() === '') return fullName;
             const parts = fullName.trim().split(/\s+/);
@@ -5052,6 +5189,7 @@
             document.getElementById('opp2PSRaw').textContent = serverStats.opp2.ps;
             
             document.getElementById('undoBtn').disabled = (matchState.undoStack.length === 0);
+            renderScoutPanel();
             
             // Update previous set scores bar
             const prevSetsBar = document.getElementById('prevSetsBar');
@@ -5107,6 +5245,8 @@
                 matchState.currentSegment = previousState.currentSegment;
                 matchState.completedSegments = previousState.completedSegments;
                 matchState.p7Stats = previousState.p7Stats;
+                matchState.rallyLog = previousState.rallyLog || [];
+                scoutDraft = { serve: null, fbk: null };
                 
                 console.log(`[UNDO] Restored to score: ${matchState.ourScore}-${matchState.theirScore}`);
                 updateMatchDisplay();
@@ -6715,6 +6855,8 @@
                 if (isTestVenueId(venueId)) return;
                 // Wind picked from a preset (not measured) must never enter the community pool.
                 if (matchState.weatherAtSetStart?.isEstimatedWind) return;
+                // Scout entry (matches entered from video): the wind at entry time is not the wind at play time.
+                if (matchSetup.scoutMode) return;
                 // Competitive sets only — the app's one competitive-set rule (isCompetitiveSet).
                 // The pool is stored as running sums, so a lopsided set can't be filtered out
                 // later; it has to be kept out at write time.
@@ -7130,6 +7272,10 @@
                     : [dataUid()],
                 // UA roster players among Player 1 ('you') and Player 2 ('partner'); null = not on the roster
                 rosterIds: matchSetup.rosterIds || { you: null, partner: null },
+                // Scout entry (Point Detective-style): one record per rally, and a flag that keeps the set
+                // out of the community pool and the public venue numbers.
+                scoutEntry: !!matchSetup.scoutMode,
+                rallyLog: matchState.rallyLog || [],
 
                 updatedAt: firebase.firestore.FieldValue.serverTimestamp()
             });
@@ -7285,6 +7431,7 @@
                 creatorId: currentUser.uid,
                 scorekeeperId: currentUser.uid,
                 rosterIds: matchSetup.rosterIds || { you: null, partner: null },
+                scoutEntry: !!matchSetup.scoutMode,
                 team1: {
                     player1: { name: safe(matchSetup.yourName || userProfile?.name), userId: isAdmin() ? null : dataUid() },
                     player2: { name: safe(matchSetup.partnerName), userId: selectedPairedPartner ? selectedPairedPartner.partnerId : null }
@@ -9968,6 +10115,11 @@
             // ── SECTION 10: SCORE-STATE WIN PROBABILITY — 15-POINT SETS ─────
             html += await buildScoreStateWinProb15Section();
 
+            html += `<hr style="border-color: rgba(255,255,255,0.1); margin: 15px 0;">`;
+
+            // ── SECTION 11: SCOUTING — rally detail (Point Detective-style entry) ──
+            html += await buildScoutingSection();
+
             if (!html) {
                 html = '<div class="stat-box" style="text-align:center; padding:40px;"><p style="opacity:0.8;">Start a match or complete some sets to see data here.</p></div>';
             }
@@ -10872,6 +11024,89 @@
                 </div>`;
             return row(yourLabel, t.you) + row(theirLabel, t.them) +
                 `<div style="font-size:0.75em;opacity:0.55;padding:4px 2px 0;">PS% = rallies won on serve &middot; SO% (side-out) = rallies won while receiving</div>`;
+        }
+
+        // ── Scouting (Point Detective-style rally detail) ─────────────────────────
+        // Exact port of Point Detective's computeTriangle(): terminal serves (aces / own errors), first
+        // ball kills (FBK) by the receiving team, transition (rallies with no FBK, one shared
+        // denominator), and PS% / SO%. 'our' = your team, 'their' = the opponents, per set.
+        function computeRallyTriangle(logs) {
+            const t = { our: { aces: 0, errors: 0, fbkYes: 0, fbkReceives: 0, transWins: 0, serveTotal: 0, serveWins: 0 },
+                        their: { aces: 0, errors: 0, fbkYes: 0, fbkReceives: 0, transWins: 0, serveTotal: 0, serveWins: 0 } };
+            let transTotal = 0, rallies = 0;
+            logs.forEach(log => (log || []).forEach(r => {
+                if (!r || !r.servingTeam || !r.serve) return;
+                rallies++;
+                const server = r.servingTeam, receiver = server === 'our' ? 'their' : 'our';
+                let winner = null;
+                if (r.serve === 'ace') { t[server].aces++; winner = server; }
+                else if (r.serve === 'error') { t[server].errors++; winner = receiver; }
+                else if (r.serve === 'in') {
+                    t[receiver].fbkReceives++;
+                    if (r.fbk === true) { t[receiver].fbkYes++; winner = receiver; }
+                    else if (r.fbk === false) { transTotal++; t[r.winner].transWins++; winner = r.winner; }
+                }
+                t[server].serveTotal++;
+                if (winner === server) t[server].serveWins++;
+            }));
+            return { t, transTotal, rallies };
+        }
+
+        async function buildScoutingSection() {
+            if (!currentUser) return '';
+            try {
+                const todayStart = new Date(); todayStart.setHours(0, 0, 0, 0);
+                const logs = [];
+                let setCount = 0;
+                const addLog = (log) => { if (Array.isArray(log) && log.length) { logs.push(log); setCount++; } };
+
+                if (currentDataScope === 'thisSet') {
+                    if (matchState?.rallyLog?.length) addLog(matchState.rallyLog);
+                } else if (currentDataScope === 'thisMatch') {
+                    matchScore.setsCompleted.forEach(set => addLog(set.matchState?.rallyLog));
+                    if (matchState?.setActive === true) addLog(matchState.rallyLog);
+                } else {
+                    const snap = await db.collection('sets').where('userId', '==', dataUid()).limit(500).get();
+                    snap.docs.forEach(doc => {
+                        const d = doc.data();
+                        if (!d.complete || d.includedInStats === false || !d.rallyLog?.length) return;
+                        if (currentDataScope === 'today') {
+                            const ts = d.createdAt?.toDate ? d.createdAt.toDate() : new Date(d.createdAt || 0);
+                            if (ts < todayStart) return;
+                        }
+                        addLog(d.rallyLog);
+                    });
+                    // the set being played is not complete yet, so it is not in the saved sets
+                    if (matchState?.setActive === true) addLog(matchState.rallyLog);
+                }
+
+                const header = `<div class="stat-box"><h3>🔎 SCOUTING — RALLY DETAIL</h3>`;
+                if (!logs.length) {
+                    return header + `<div style="opacity:0.65; font-size:0.9em; padding:6px 0;">No rally detail for this view yet. Turn on <strong>Scout entry</strong> on Match Setup to log each rally's serve result, first ball kill and winner.</div></div>`;
+                }
+                const { t, transTotal, rallies } = computeRallyTriangle(logs);
+                const pct = (n, d) => d > 0 ? Math.round(n / d * 100) + '%' : '—';
+                const labels = (currentDataScope === 'thisSet' || currentDataScope === 'thisMatch') && matchSetup?.yourName
+                    ? scoutTeamLabels() : { our: 'Your team', their: 'Opponents' };
+                const row = (label, value, sub) => `<div class="stat-row"><span>${label}</span><span><strong>${value}</strong>${sub ? ` <span style="opacity:0.55; font-size:0.85em;">${sub}</span>` : ''}</span></div>`;
+                const team = (key, other) => {
+                    const x = t[key], o = t[other];
+                    return `<div style="font-size:0.85em; font-weight:bold; opacity:0.7; text-transform:uppercase; margin:12px 0 4px;">${escHtml(labels[key])}</div>` +
+                        row('Aces', x.aces, pct(x.aces, x.serveTotal) + ' of serves') +
+                        row('Serve errors', x.errors, pct(x.errors, x.serveTotal) + ' of serves') +
+                        row('Terminal serves for', x.aces + o.errors, 'aces + their errors') +
+                        row('First ball kills (receiving)', pct(x.fbkYes, x.fbkReceives), `${x.fbkYes} of ${x.fbkReceives}`) +
+                        row('Transition wins', pct(x.transWins, transTotal), `${x.transWins} of ${transTotal}`) +
+                        row('PS% (rallies won serving)', pct(x.serveWins, x.serveTotal), `${x.serveWins} of ${x.serveTotal}`) +
+                        row('SO% (rallies won receiving)', pct(o.serveTotal - o.serveWins, o.serveTotal), `${o.serveTotal - o.serveWins} of ${o.serveTotal}`);
+                };
+                return header +
+                    `<div style="font-size:0.8em; opacity:0.6; margin-bottom:4px;">${rallies} rallies logged across ${setCount} set${setCount === 1 ? '' : 's'}. First ball kill = the receiving team scores on its first attack (or the server never gets the ball back). Transition = every rally with no first ball kill, counted once.</div>` +
+                    team('our', 'their') + team('their', 'our') + `</div>`;
+            } catch (e) {
+                console.error('[DATA] Scouting section error:', e);
+                return '';
+            }
         }
 
         // ── SECTION 6a: Live Server Section ─────────────────────────────────

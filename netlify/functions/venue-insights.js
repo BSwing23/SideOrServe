@@ -31,7 +31,7 @@ const json = (statusCode, body) => ({
    ourScore, theirScore, completedSegments, servingTeamWon, matchId, venueId. */
 function computeVenueInsights(sets, sinceMs) {
   const used = sets.filter((d) =>
-    d.complete && d.includedInStats !== false && !d.mirroredFromSetId &&
+    d.complete && d.includedInStats !== false && !d.mirroredFromSetId && d.scoutEntry !== true &&
     !TEST_VENUES.includes(d.venueId) &&
     typeof d.ourScore === "number" && typeof d.theirScore === "number" && d.ourScore !== d.theirScore &&
     (d.createdAtMs || 0) >= sinceMs);
@@ -140,7 +140,7 @@ exports.handler = async (event) => {
 
   const snap = await admin.firestore().collection("sets").where("venueId", "==", venue)
     .select("complete", "includedInStats", "mirroredFromSetId", "gameType", "ourScore", "theirScore",
-            "completedSegments", "servingTeamWon", "matchId", "venueId", "createdAt")
+            "completedSegments", "servingTeamWon", "matchId", "venueId", "createdAt", "scoutEntry")
     .get();
   const sets = snap.docs.map((d) => {
     const x = d.data();

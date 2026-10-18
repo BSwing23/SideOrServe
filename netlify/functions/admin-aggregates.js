@@ -43,6 +43,7 @@ function computeAggregates(sets) {
     if (d.includedInStats === false) return;
     if (TEST_VENUES.includes(d.venueId)) return; // test venues never count
     if (d.mirroredFromSetId) return;              // partner mirror of a set already counted
+    if (d.scoutEntry === true) return;            // entered from video: wrong weather, not live play
     if (typeof d.ourScore !== "number" || typeof d.theirScore !== "number") return;
     if (d.ourScore === d.theirScore) return;
     used.push(d);
@@ -131,7 +132,7 @@ exports.handler = async (event) => {
 
   const snap = await admin.firestore().collection("sets")
     .select("userId", "matchId", "venueId", "gameType", "complete", "includedInStats",
-            "mirroredFromSetId", "ourScore", "theirScore", "completedSegments")
+            "mirroredFromSetId", "ourScore", "theirScore", "completedSegments", "scoutEntry")
     .get();
   return json(200, computeAggregates(snap.docs.map((d) => d.data())));
 };
