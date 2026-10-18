@@ -11052,13 +11052,32 @@
             return { t, transTotal, rallies };
         }
 
+        // Each server's own serving, totalled per PERSON (by name) so it works across slots and sets.
+        // `entries` = [{ log, names }] where names maps the slot keys (you/partner/opp1/opp2) to names.
+        function computeRallyServers(entries) {
+            const people = {};
+            entries.forEach(({ log, names }) => (log || []).forEach(r => {
+                if (!r || !r.server || !r.serve) return;
+                const name = (names && names[r.server]) || '';
+                if (!name.trim()) return;
+                const key = name.trim().toLowerCase() + '|' + r.servingTeam;
+                const x = people[key] || (people[key] = { name: name.trim(), team: r.servingTeam, serves: 0, aces: 0, errors: 0, inPlay: 0, wins: 0 });
+                x.serves++;
+                if (r.serve === 'ace') x.aces++; else if (r.serve === 'error') x.errors++; else x.inPlay++;
+                if (r.winner === r.servingTeam) x.wins++;
+            }));
+            return Object.values(people).sort((a, b) => b.serves - a.serves);
+        }
+
         async function buildScoutingSection() {
             if (!currentUser) return '';
             try {
                 const todayStart = new Date(); todayStart.setHours(0, 0, 0, 0);
                 const logs = [];
+                const entries = [];   // the same logs with the player names for each slot, for per-server totals
                 let setCount = 0;
-                const addLog = (log) => { if (Array.isArray(log) && log.length) { logs.push(log); setCount++; } };
+                const liveNames = () => ({ you: matchSetup?.yourName || userProfile?.name, partner: matchSetup?.partnerName, opp1: matchSetup?.opponent1Name, opp2: matchSetup?.opponent2Name });
+                const addLog = (log, names) => { if (Array.isArray(log) && log.length) { logs.push(log); entries.push({ log, names: names || liveNames() }); setCount++; } };
 
                 if (currentDataScope === 'thisSet') {
                     if (matchState?.rallyLog?.length) addLog(matchState.rallyLog);
@@ -11074,7 +11093,7 @@
                             const ts = d.createdAt?.toDate ? d.createdAt.toDate() : new Date(d.createdAt || 0);
                             if (ts < todayStart) return;
                         }
-                        addLog(d.rallyLog);
+                        addLog(d.rallyLog, { you: d.playerName, partner: d.partnerName, opp1: d.opponent1Name, opp2: d.opponent2Name });
                     });
                     // the set being played is not complete yet, so it is not in the saved sets
                     if (matchState?.setActive === true) addLog(matchState.rallyLog);
@@ -11089,6 +11108,13 @@
                 const labels = (currentDataScope === 'thisSet' || currentDataScope === 'thisMatch') && matchSetup?.yourName
                     ? scoutTeamLabels() : { our: 'Your team', their: 'Opponents' };
                 const row = (label, value, sub) => `<div class="stat-row"><span>${label}</span><span><strong>${value}</strong>${sub ? ` <span style="opacity:0.55; font-size:0.85em;">${sub}</span>` : ''}</span></div>`;
+                const servers = computeRallyServers(entries);
+                const serverRows = (key) => {
+                    const mine = servers.filter(p => p.team === key);
+                    if (!mine.length) return '';
+                    return `<div style="font-size:0.8em; opacity:0.6; margin:8px 0 2px;">By server</div>` + mine.map(p =>
+                        `<div class="stat-row" style="font-size:0.9em;"><span>${escHtml(p.name)}</span><span><strong>${p.serves}</strong> served &middot; ${p.aces} ace${p.aces === 1 ? '' : 's'} (${pct(p.aces, p.serves)}) &middot; ${p.errors} error${p.errors === 1 ? '' : 's'} (${pct(p.errors, p.serves)}) &middot; PS ${pct(p.wins, p.serves)}</span></div>`).join('');
+                };
                 const team = (key, other) => {
                     const x = t[key], o = t[other];
                     return `<div style="font-size:0.85em; font-weight:bold; opacity:0.7; text-transform:uppercase; margin:12px 0 4px;">${escHtml(labels[key])}</div>` +
@@ -11098,7 +11124,8 @@
                         row('First ball kills (receiving)', pct(x.fbkYes, x.fbkReceives), `${x.fbkYes} of ${x.fbkReceives}`) +
                         row('Transition wins', pct(x.transWins, transTotal), `${x.transWins} of ${transTotal}`) +
                         row('PS% (rallies won serving)', pct(x.serveWins, x.serveTotal), `${x.serveWins} of ${x.serveTotal}`) +
-                        row('SO% (rallies won receiving)', pct(o.serveTotal - o.serveWins, o.serveTotal), `${o.serveTotal - o.serveWins} of ${o.serveTotal}`);
+                        row('SO% (rallies won receiving)', pct(o.serveTotal - o.serveWins, o.serveTotal), `${o.serveTotal - o.serveWins} of ${o.serveTotal}`) +
+                        serverRows(key);
                 };
                 return header +
                     `<div style="font-size:0.8em; opacity:0.6; margin-bottom:4px;">${rallies} rallies logged across ${setCount} set${setCount === 1 ? '' : 's'}. First ball kill = the receiving team scores on its first attack (or the server never gets the ball back). Transition = every rally with no first ball kill, counted once.</div>` +
