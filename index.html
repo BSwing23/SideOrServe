@@ -4846,6 +4846,8 @@
             updateMatchDisplay();
         }
 
+        function serverStatsNameKey(name) { return String(name || '').trim().toLowerCase(); }
+
         async function fetchAllTimeServerStats() {
             if (!currentUser) return;
             try {
@@ -4853,13 +4855,11 @@
                     .where('userId', '==', dataUid())
                     .limit(500).get();
 
-                const totals = {
-                    you:     { ps: 0, totalServes: 0 },
-                    partner: { ps: 0, totalServes: 0 },
-                    opp1:    { ps: 0, totalServes: 0 },
-                    opp2:    { ps: 0, totalServes: 0 },
-                };
-
+                // Totals per PERSON (by name), not per slot. "Player 1" / "Player 2" are just slots
+                // — on a coach's account they hold different people in different matches — so adding
+                // slot by slot blended unrelated players. Completed sets only: the set being played is
+                // added in updateMatchDisplay() and a finished set is already in here (never add it twice).
+                const totals = {};
                 snap.docs.forEach(doc => {
                     const d = doc.data();
                     if (!d.complete || !d.serverStats) return;
@@ -4867,9 +4867,13 @@
                     if (isTestVenueId(d.venueId)) return;
                     const _faTier = matchSetup.competitionTier;
                     if (_faTier && d.competitionTier !== _faTier) return;
+                    const slotNames = { you: d.playerName, partner: d.partnerName, opp1: d.opponent1Name, opp2: d.opponent2Name };
                     ['you', 'partner', 'opp1', 'opp2'].forEach(key => {
-                        totals[key].ps          += d.serverStats[key]?.ps          || 0;
-                        totals[key].totalServes += d.serverStats[key]?.totalServes || 0;
+                        const who = serverStatsNameKey(slotNames[key]);
+                        if (!who) return;
+                        const t = totals[who] || (totals[who] = { ps: 0, totalServes: 0 });
+                        t.ps          += d.serverStats[key]?.ps          || 0;
+                        t.totalServes += d.serverStats[key]?.totalServes || 0;
                     });
                 });
 
@@ -4879,12 +4883,7 @@
             } catch(e) {
                 console.error('[ALL TIME] Fetch failed:', e.code, e.message);
                 // Set empty object so UI shows zeroes rather than retrying infinitely
-                window._allTimeServerStats = {
-                    you:     { ps: 0, totalServes: 0 },
-                    partner: { ps: 0, totalServes: 0 },
-                    opp1:    { ps: 0, totalServes: 0 },
-                    opp2:    { ps: 0, totalServes: 0 },
-                };
+                window._allTimeServerStats = {};
                 if (currentServerStatsScope === 'allTime') updateMatchDisplay();
                 if (e.code === 'permission-denied') {
                     console.warn('[ALL TIME] Firestore permission denied. Ensure sets collection rule is published: allow read, write: if request.auth != null && request.auth.uid == resource.data.userId;');
@@ -5007,25 +5006,26 @@
                 }
 
             } else {
-                // allTime — pull from Firestore cache + current match
+                // allTime — each person's saved history (every completed set, matched by name),
+                // plus the set being played right now. Completed sets of this match are already in
+                // the saved history, so they are NOT added again from memory.
                 serverStats = emptyStats();
 
-                // Layer 1: all-time historical from Firestore cache
                 const cached = window._allTimeServerStats;
                 if (cached) {
+                    const slotNames = {
+                        you: matchSetup.yourName || userProfile?.name, partner: matchSetup.partnerName,
+                        opp1: matchSetup.opponent1Name, opp2: matchSetup.opponent2Name
+                    };
                     ['you', 'partner', 'opp1', 'opp2'].forEach(server => {
-                        serverStats[server].ps          += cached[server]?.ps          || 0;
-                        serverStats[server].totalServes += cached[server]?.totalServes || 0;
+                        const t = cached[serverStatsNameKey(slotNames[server])];
+                        if (!t) return;
+                        serverStats[server].ps          += t.ps          || 0;
+                        serverStats[server].totalServes += t.totalServes || 0;
                     });
                 }
 
-                // Layer 2: current match in-memory (not yet saved or supplement to saved)
-                matchScore.setsCompleted.forEach(set => {
-                    ['you', 'partner', 'opp1', 'opp2'].forEach(server => {
-                        serverStats[server].ps          += set.matchState?.servers?.[server]?.ps          || 0;
-                        serverStats[server].totalServes += set.matchState?.servers?.[server]?.totalServes || 0;
-                    });
-                });
+                // The set in progress is not complete, so it is not in the saved history yet.
                 if (matchState.setActive) {
                     ['you', 'partner', 'opp1', 'opp2'].forEach(server => {
                         serverStats[server].ps          += matchState.servers[server]?.ps          || 0;
@@ -5215,6 +5215,7 @@
                 await updateRPStats();
                 await updatePooledVenueStats();  // best-effort — never throws, see function
                 await refreshCommunityCtx();     // the set just pooled is now part of the community numbers
+                fetchAllTimeServerStats();       // the set just saved is now part of each player's All Time
                 const setData = {
                     setNumber: matchScore.currentSetNumber,
                     winner: winner,
@@ -11168,29 +11169,56 @@
                     });
                 };
 
-                snapshot.docs.forEach(doc => {
-                    const d = doc.data();
-                    if (currentDataScope === 'today') {
-                        const ts = d.createdAt?.toDate ? d.createdAt.toDate() : new Date(d.createdAt || 0);
-                        if (ts < todayStart) return;
-                    }
-                    addSetSideData(d);
+                const inMemorySet = (ms) => ({
+                    complete: true,
+                    includedInStats: true,
+                    completedSegments: ms.completedSegments,
+                    venueId: matchSetup.venue,
+                    venue: matchSetup.venueName || matchSetup.venue,
+                    ourScore: ms.ourScore,
+                    theirScore: ms.theirScore,
+                    weatherAtSetStart: { ...(ms.weatherAtSetStart || {}), isEstimatedWind: false }  // your own live view, not the pooled venue stats
                 });
 
-                // Also fold in the in-memory active set from the current match — only while it is
-                // still being played (a finished set is already counted from Firestore).
-                if (typeof matchState !== 'undefined' && matchState.setActive === true && matchState.completedSegments?.length && matchSetup?.venue) {
-                    addSetSideData({
-                        complete: true,
-                        includedInStats: true,
-                        completedSegments: matchState.completedSegments,
-                        venueId: matchSetup.venue,
-                        venue: matchSetup.venueName || matchSetup.venue,
-                        ourScore: matchState.ourScore,
-                        theirScore: matchState.theirScore,
-                        gameType: matchSetup.gameType,
-                        weatherAtSetStart: matchState.weatherAtSetStart
+                if (currentDataScope === 'thisSet' || currentDataScope === 'thisMatch') {
+                    // Only this match is shown, straight from memory (the same source the other This Set /
+                    // This Match sections use): the sets already finished, plus the one being played.
+                    if (typeof matchState !== 'undefined' && matchSetup?.venue) {
+                        if (currentDataScope === 'thisMatch') {
+                            matchScore.setsCompleted.forEach(set => {
+                                if (set.matchState?.completedSegments?.length) addSetSideData(inMemorySet(set.matchState));
+                            });
+                            if (matchState.setActive === true && matchState.completedSegments?.length) addSetSideData(inMemorySet(matchState));
+                        } else if (matchState.completedSegments?.length) {
+                            // This Set: the set being played, or the one that just finished
+                            addSetSideData(inMemorySet(matchState));
+                        }
+                    }
+                } else {
+                    snapshot.docs.forEach(doc => {
+                        const d = doc.data();
+                        if (currentDataScope === 'today') {
+                            const ts = d.createdAt?.toDate ? d.createdAt.toDate() : new Date(d.createdAt || 0);
+                            if (ts < todayStart) return;
+                        }
+                        addSetSideData(d);
                     });
+
+                    // Also fold in the in-memory active set from the current match — only while it is
+                    // still being played (a finished set is already counted from Firestore).
+                    if (typeof matchState !== 'undefined' && matchState.setActive === true && matchState.completedSegments?.length && matchSetup?.venue) {
+                        addSetSideData({
+                            complete: true,
+                            includedInStats: true,
+                            completedSegments: matchState.completedSegments,
+                            venueId: matchSetup.venue,
+                            venue: matchSetup.venueName || matchSetup.venue,
+                            ourScore: matchState.ourScore,
+                            theirScore: matchState.theirScore,
+                            gameType: matchSetup.gameType,
+                            weatherAtSetStart: matchState.weatherAtSetStart
+                        });
+                    }
                 }
 
                 const venueIds = Object.keys(venueBias);
@@ -11214,7 +11242,7 @@
                 const venueName = venueBias[targetVid].name;
                 const pairs = [['north','south'], ['east','west']];
                 let html = `<div class="stat-box"><h3>🧭 SIDE BIAS — ${venueName.toUpperCase()}</h3>
-                    <div style="font-size:0.8em;opacity:0.6;margin-bottom:2px;">Total points scored on each side regardless of team — pure court/wind/sun data for this venue.</div>
+                    <div style="font-size:0.8em;opacity:0.6;margin-bottom:2px;">Total points scored on each side regardless of team — pure court/wind/sun data for this venue. Showing: <strong>${({ thisSet: 'This Set', thisMatch: 'This Match', today: 'Today', allTime: 'All Time' })[currentDataScope] || 'All Time'}</strong>.</div>
                     <div style="font-size:0.78em;opacity:0.5;font-style:italic;margin-bottom:10px;">Your own sets here include blowouts — this raw total is not filtered by Competitive Sets Only.</div>`;
 
                 let anyPair = false;
